@@ -15,7 +15,7 @@ import { createD1Mock } from './helpers.ts';
 
 async function createRepositories() {
   const d1 = createD1Mock();
-  const repositories = new D1Repositories({ d1Database: d1 });
+  const repositories = new D1Repositories({ d1Database: d1, localName: 'test-user' });
   await repositories.init();
   return {
     repositories,

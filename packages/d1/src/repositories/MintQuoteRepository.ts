@@ -137,8 +137,8 @@ export class D1MintQuoteRepository implements MintQuoteRepository {
               quoteDataJson, lastObservedRemoteState, lastObservedRemoteStateAt, reusable,
               createdAt, updatedAt
        FROM coco_cashu_canonical_mint_quotes
-       WHERE mintUrl = ? AND method = ? AND quoteId = ? LIMIT 1`,
-      [normalizeMintUrl(mintUrl), method, quoteId],
+       WHERE local_name = ? AND mintUrl = ? AND method = ? AND quoteId = ? LIMIT 1`,
+      [this.db.localName, normalizeMintUrl(mintUrl), method, quoteId],
     );
     return row ? rowToMintQuote(row) : null;
   }
@@ -149,10 +149,10 @@ export class D1MintQuoteRepository implements MintQuoteRepository {
     const amount = getMintQuoteAmount(quote);
     await this.db.run(
       `INSERT INTO coco_cashu_canonical_mint_quotes
-         (mintUrl, method, quoteId, state, request, amount, unit, expiry, pubkey, quoteDataJson,
+         (local_name, mintUrl, method, quoteId, state, request, amount, unit, expiry, pubkey, quoteDataJson,
           lastObservedRemoteState, lastObservedRemoteStateAt, reusable, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(mintUrl, method, quoteId) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(local_name, mintUrl, method, quoteId) DO UPDATE SET
          state=excluded.state,
          request=excluded.request,
          amount=excluded.amount,
@@ -165,6 +165,7 @@ export class D1MintQuoteRepository implements MintQuoteRepository {
          reusable=excluded.reusable,
          updatedAt=excluded.updatedAt`,
       [
+        this.db.localName,
         normalizeMintUrl(quote.mintUrl),
         quote.method,
         quote.quoteId,
@@ -194,8 +195,8 @@ export class D1MintQuoteRepository implements MintQuoteRepository {
     await this.db.run(
       `UPDATE coco_cashu_canonical_mint_quotes
        SET state = ?, lastObservedRemoteState = ?, lastObservedRemoteStateAt = ?, updatedAt = ?
-       WHERE mintUrl = ? AND method = ? AND quoteId = ?`,
-      [state, state, observedAt, observedAt, normalizeMintUrl(mintUrl), method, quoteId],
+       WHERE local_name = ? AND mintUrl = ? AND method = ? AND quoteId = ?`,
+      [state, state, observedAt, observedAt, this.db.localName, normalizeMintUrl(mintUrl), method, quoteId],
     );
   }
 
@@ -205,8 +206,8 @@ export class D1MintQuoteRepository implements MintQuoteRepository {
               quoteDataJson, lastObservedRemoteState, lastObservedRemoteStateAt, reusable,
               createdAt, updatedAt
        FROM coco_cashu_canonical_mint_quotes
-       WHERE (state IS NULL OR state != 'ISSUED') ${method ? 'AND method = ?' : ''}`,
-      method ? [method] : [],
+       WHERE local_name = ? AND (state IS NULL OR state != 'ISSUED') ${method ? 'AND method = ?' : ''}`,
+      method ? [this.db.localName, method] : [this.db.localName],
     );
     return rows.map(rowToMintQuote).filter(isMintQuotePending);
   }

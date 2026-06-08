@@ -111,13 +111,14 @@ const rowToOperation = (row: MeltOperationRow): MeltOperation => {
   return operation as MeltOperation;
 };
 
-const operationToParams = (operation: MeltOperation): unknown[] => {
+const operationToParams = (ln: string, operation: MeltOperation): unknown[] => {
   const createdAtSeconds = Math.floor(operation.createdAt / 1000);
   const updatedAtSeconds = Math.floor(operation.updatedAt / 1000);
   const methodDataJson = stringifyJson(operation.methodData);
 
   if (operation.state === 'init') {
     return [
+      ln,
       operation.id,
       operation.mintUrl,
       operation.state,
@@ -157,6 +158,7 @@ const operationToParams = (operation: MeltOperation): unknown[] => {
       : null;
 
   return [
+    ln,
     operation.id,
     operation.mintUrl,
     operation.state,
@@ -194,8 +196,8 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
     }
 
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_melt_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_melt_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (exists) {
       throw new Error(`MeltOperation with id ${operation.id} already exists`);
@@ -203,11 +205,11 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
 
     await this.assertNoDuplicateQuoteOperation(operation);
 
-    const params = operationToParams(operation);
+    const params = operationToParams(this.db.localName, operation);
     await this.db.run(
       `INSERT INTO coco_cashu_melt_operations
-         (id, mintUrl, state, createdAt, updatedAt, error, method, methodDataJson, quoteId, unit, amount, fee_reserve, swap_fee, needsSwap, inputAmount, inputProofSecretsJson, changeOutputDataJson, swapOutputDataJson, changeAmount, effectiveFee, finalizedDataJson)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (local_name, id, mintUrl, state, createdAt, updatedAt, error, method, methodDataJson, quoteId, unit, amount, fee_reserve, swap_fee, needsSwap, inputAmount, inputProofSecretsJson, changeOutputDataJson, swapOutputDataJson, changeAmount, effectiveFee, finalizedDataJson)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params,
     );
   }
@@ -218,8 +220,8 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
     }
 
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_melt_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_melt_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (!exists) {
       throw new Error(`MeltOperation with id ${operation.id} not found`);
@@ -233,7 +235,7 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
       await this.db.run(
         `UPDATE coco_cashu_melt_operations
          SET state = ?, updatedAt = ?, error = ?, method = ?, methodDataJson = ?, quoteId = ?, unit = ?
-         WHERE id = ?`,
+         WHERE local_name = ? AND id = ?`,
         [
           operation.state,
           updatedAtSeconds,
@@ -242,6 +244,7 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
           stringifyJson(operation.methodData),
           operation.quoteId ?? null,
           operation.unit,
+          this.db.localName,
           operation.id,
         ],
       );
@@ -253,7 +256,7 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
     await this.db.run(
       `UPDATE coco_cashu_melt_operations
         SET state = ?, updatedAt = ?, error = ?, method = ?, methodDataJson = ?, quoteId = ?, unit = ?, amount = ?, fee_reserve = ?, swap_fee = ?, needsSwap = ?, inputAmount = ?, inputProofSecretsJson = ?, changeOutputDataJson = ?, swapOutputDataJson = ?, changeAmount = ?, effectiveFee = ?, finalizedDataJson = ?
-        WHERE id = ?`,
+        WHERE local_name = ? AND id = ?`,
       [
         operation.state,
         updatedAtSeconds,
@@ -279,6 +282,7 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
         operation.state === 'finalized' && settlement.finalizedData !== undefined
           ? JSON.stringify(settlement.finalizedData)
           : null,
+        this.db.localName,
         operation.id,
       ],
     );
@@ -286,45 +290,46 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
 
   async getById(id: string): Promise<MeltOperation | null> {
     const row = await this.db.get<MeltOperationRow>(
-      'SELECT * FROM coco_cashu_melt_operations WHERE id = ?',
-      [id],
+      'SELECT * FROM coco_cashu_melt_operations WHERE local_name = ? AND id = ?',
+      [this.db.localName, id],
     );
     return row ? rowToOperation(row) : null;
   }
 
   async getByState(state: MeltOperationState): Promise<MeltOperation[]> {
     const rows = await this.db.all<MeltOperationRow>(
-      'SELECT * FROM coco_cashu_melt_operations WHERE state = ?',
-      [state],
+      'SELECT * FROM coco_cashu_melt_operations WHERE local_name = ? AND state = ?',
+      [this.db.localName, state],
     );
     return rows.map(rowToOperation);
   }
 
   async getPending(): Promise<MeltOperation[]> {
     const rows = await this.db.all<MeltOperationRow>(
-      'SELECT * FROM coco_cashu_melt_operations WHERE state IN ("executing", "pending")',
+      'SELECT * FROM coco_cashu_melt_operations WHERE local_name = ? AND state IN ("executing", "pending")',
+      [this.db.localName],
     );
     return rows.map(rowToOperation);
   }
 
   async getByMintUrl(mintUrl: string): Promise<MeltOperation[]> {
     const rows = await this.db.all<MeltOperationRow>(
-      'SELECT * FROM coco_cashu_melt_operations WHERE mintUrl = ?',
-      [mintUrl],
+      'SELECT * FROM coco_cashu_melt_operations WHERE local_name = ? AND mintUrl = ?',
+      [this.db.localName, mintUrl],
     );
     return rows.map(rowToOperation);
   }
 
   async getByQuoteId(mintUrl: string, quoteId: string): Promise<MeltOperation[]> {
     const rows = await this.db.all<MeltOperationRow>(
-      'SELECT * FROM coco_cashu_melt_operations WHERE mintUrl = ? AND quoteId = ?',
-      [mintUrl, quoteId],
+      'SELECT * FROM coco_cashu_melt_operations WHERE local_name = ? AND mintUrl = ? AND quoteId = ?',
+      [this.db.localName, mintUrl, quoteId],
     );
     return rows.map(rowToOperation);
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.run('DELETE FROM coco_cashu_melt_operations WHERE id = ?', [id]);
+    await this.db.run('DELETE FROM coco_cashu_melt_operations WHERE local_name = ? AND id = ?', [this.db.localName, id]);
   }
 
   private async assertNoDuplicateQuoteOperation(operation: MeltOperation): Promise<void> {
@@ -332,8 +337,8 @@ export class D1MeltOperationRepository implements MeltOperationRepository {
     if (!quoteId) return;
 
     const duplicate = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_melt_operations WHERE mintUrl = ? AND quoteId = ? AND id <> ? LIMIT 1',
-      [operation.mintUrl, quoteId, operation.id],
+      'SELECT id FROM coco_cashu_melt_operations WHERE local_name = ? AND mintUrl = ? AND quoteId = ? AND id <> ? LIMIT 1',
+      [this.db.localName, operation.mintUrl, quoteId, operation.id],
     );
     if (duplicate) {
       throw new Error(

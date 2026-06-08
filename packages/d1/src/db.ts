@@ -3,7 +3,11 @@
  * Provides run/get/all/exec methods compatible with the coco repository pattern.
  */
 export class D1Db {
-  constructor(readonly db: D1Database) {}
+  readonly localName: string;
+
+  constructor(readonly db: D1Database, localName: string) {
+    this.localName = localName;
+  }
 
   async run(sql: string, params: unknown[] = []): Promise<{ meta: D1Result<never>['meta'] }> {
     const result = await this.db.prepare(sql).bind(...params).run();

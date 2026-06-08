@@ -23,8 +23,8 @@ export class D1LegacyMintQuoteRepository implements LegacyMintQuoteRepository {
     }>(
       `SELECT mintUrl, quote, state, request, amount, unit, expiry, pubkey
        FROM coco_cashu_mint_quotes
-       WHERE state != 'ISSUED' ${normalizedMintUrl ? 'AND mintUrl = ?' : ''}`,
-      normalizedMintUrl ? [normalizedMintUrl] : [],
+       WHERE local_name = ? AND state != 'ISSUED' ${normalizedMintUrl ? 'AND mintUrl = ?' : ''}`,
+      normalizedMintUrl ? [this.db.localName, normalizedMintUrl] : [this.db.localName],
     );
 
     const now = Date.now();

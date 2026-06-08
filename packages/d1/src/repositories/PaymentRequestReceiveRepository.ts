@@ -147,9 +147,9 @@ export class D1PaymentRequestReceiveOperationRepository
     const row = operationToRow(operation);
     await this.db.run(
       `INSERT INTO coco_cashu_payment_request_receive_operations
-        (id, requestId, encodedRequest, state, transport, amount, unit, mintsJson, singleUse, description, createdAt, updatedAt, error, completedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      Object.values(row),
+        (local_name, id, requestId, encodedRequest, state, transport, amount, unit, mintsJson, singleUse, description, createdAt, updatedAt, error, completedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [this.db.localName, ...Object.values(row)],
     );
   }
 
@@ -159,7 +159,7 @@ export class D1PaymentRequestReceiveOperationRepository
       `UPDATE coco_cashu_payment_request_receive_operations
        SET requestId = ?, encodedRequest = ?, state = ?, transport = ?, amount = ?, unit = ?,
            mintsJson = ?, singleUse = ?, description = ?, updatedAt = ?, error = ?, completedAt = ?
-       WHERE id = ?`,
+       WHERE local_name = ? AND id = ?`,
       [
         row.requestId,
         row.encodedRequest,
@@ -173,6 +173,7 @@ export class D1PaymentRequestReceiveOperationRepository
         getUnixTimeSeconds(),
         row.error,
         row.completedAt,
+        this.db.localName,
         row.id,
       ],
     );
@@ -180,24 +181,24 @@ export class D1PaymentRequestReceiveOperationRepository
 
   async getById(id: string): Promise<PaymentRequestReceiveOperation | null> {
     const row = await this.db.get<OperationRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_operations WHERE id = ?',
-      [id],
+      'SELECT * FROM coco_cashu_payment_request_receive_operations WHERE local_name = ? AND id = ?',
+      [this.db.localName, id],
     );
     return row ? rowToOperation(row) : null;
   }
 
   async getByState(state: PaymentRequestReceiveState): Promise<PaymentRequestReceiveOperation[]> {
     const rows = await this.db.all<OperationRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_operations WHERE state = ?',
-      [state],
+      'SELECT * FROM coco_cashu_payment_request_receive_operations WHERE local_name = ? AND state = ?',
+      [this.db.localName, state],
     );
     return rows.map(rowToOperation);
   }
 
   async getActiveByRequestId(requestId: string): Promise<PaymentRequestReceiveOperation[]> {
     const rows = await this.db.all<OperationRow>(
-      "SELECT * FROM coco_cashu_payment_request_receive_operations WHERE state = 'active' AND requestId = ?",
-      [requestId],
+      "SELECT * FROM coco_cashu_payment_request_receive_operations WHERE local_name = ? AND state = 'active' AND requestId = ?",
+      [this.db.localName, requestId],
     );
     return rows.map(rowToOperation);
   }
@@ -207,11 +208,12 @@ export class D1PaymentRequestReceiveOperationRepository
   }): Promise<PaymentRequestReceiveOperation[]> {
     const rows = filter?.state
       ? await this.db.all<OperationRow>(
-          'SELECT * FROM coco_cashu_payment_request_receive_operations WHERE state = ?',
-          [filter.state],
+          'SELECT * FROM coco_cashu_payment_request_receive_operations WHERE local_name = ? AND state = ?',
+          [this.db.localName, filter.state],
         )
       : await this.db.all<OperationRow>(
-          'SELECT * FROM coco_cashu_payment_request_receive_operations',
+          'SELECT * FROM coco_cashu_payment_request_receive_operations WHERE local_name = ?',
+          [this.db.localName],
         );
     return rows.map(rowToOperation);
   }
@@ -226,11 +228,11 @@ export class D1PaymentRequestReceiveAttemptRepository
     const row = attemptToRow(attempt);
     await this.db.run(
       `INSERT INTO coco_cashu_payment_request_receive_attempts
-        (id, requestOperationId, requestId, transport, transportMessageId, payloadHash, senderPubkey,
+        (local_name, id, requestOperationId, requestId, transport, transportMessageId, payloadHash, senderPubkey,
          memo, mintUrl, unit, grossAmount, fee, netAmount, receiveOperationId, state, error,
          payloadJson, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      Object.values(row),
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [this.db.localName, ...Object.values(row)],
     );
   }
 
@@ -241,7 +243,7 @@ export class D1PaymentRequestReceiveAttemptRepository
        SET requestId = ?, transport = ?, transportMessageId = ?, payloadHash = ?, senderPubkey = ?,
            memo = ?, mintUrl = ?, unit = ?, grossAmount = ?, fee = ?, netAmount = ?,
            receiveOperationId = ?, state = ?, error = ?, payloadJson = ?, updatedAt = ?
-       WHERE id = ?`,
+       WHERE local_name = ? AND id = ?`,
       [
         row.requestId,
         row.transport,
@@ -259,6 +261,7 @@ export class D1PaymentRequestReceiveAttemptRepository
         row.error,
         row.payloadJson,
         getUnixTimeSeconds(),
+        this.db.localName,
         row.id,
       ],
     );
@@ -266,8 +269,8 @@ export class D1PaymentRequestReceiveAttemptRepository
 
   async getById(id: string): Promise<PaymentRequestReceiveAttempt | null> {
     const row = await this.db.get<AttemptRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE id = ?',
-      [id],
+      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE local_name = ? AND id = ?',
+      [this.db.localName, id],
     );
     return row ? rowToAttempt(row) : null;
   }
@@ -276,8 +279,8 @@ export class D1PaymentRequestReceiveAttemptRepository
     requestOperationId: string,
   ): Promise<PaymentRequestReceiveAttempt[]> {
     const rows = await this.db.all<AttemptRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE requestOperationId = ?',
-      [requestOperationId],
+      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE local_name = ? AND requestOperationId = ?',
+      [this.db.localName, requestOperationId],
     );
     return rows.map(rowToAttempt);
   }
@@ -286,8 +289,8 @@ export class D1PaymentRequestReceiveAttemptRepository
     receiveOperationId: string,
   ): Promise<PaymentRequestReceiveAttempt | null> {
     const row = await this.db.get<AttemptRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE receiveOperationId = ?',
-      [receiveOperationId],
+      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE local_name = ? AND receiveOperationId = ?',
+      [this.db.localName, receiveOperationId],
     );
     return row ? rowToAttempt(row) : null;
   }
@@ -296,8 +299,8 @@ export class D1PaymentRequestReceiveAttemptRepository
     transportMessageId: string,
   ): Promise<PaymentRequestReceiveAttempt | null> {
     const row = await this.db.get<AttemptRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE transportMessageId = ?',
-      [transportMessageId],
+      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE local_name = ? AND transportMessageId = ?',
+      [this.db.localName, transportMessageId],
     );
     return row ? rowToAttempt(row) : null;
   }
@@ -307,8 +310,8 @@ export class D1PaymentRequestReceiveAttemptRepository
     payloadHash: string,
   ): Promise<PaymentRequestReceiveAttempt | null> {
     const row = await this.db.get<AttemptRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE requestOperationId = ? AND payloadHash = ?',
-      [requestOperationId, payloadHash],
+      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE local_name = ? AND requestOperationId = ? AND payloadHash = ?',
+      [this.db.localName, requestOperationId, payloadHash],
     );
     return row ? rowToAttempt(row) : null;
   }
@@ -319,10 +322,10 @@ export class D1PaymentRequestReceiveAttemptRepository
   ): Promise<PaymentRequestReceiveAttempt | null> {
     const row = await this.db.get<AttemptRow>(
       `SELECT * FROM coco_cashu_payment_request_receive_attempts
-       WHERE requestId = ? AND payloadHash = ?
+       WHERE local_name = ? AND requestId = ? AND payloadHash = ?
        ORDER BY CASE WHEN state = 'finalized' THEN 0 ELSE 1 END, createdAt ASC
        LIMIT 1`,
-      [requestId, payloadHash],
+      [this.db.localName, requestId, payloadHash],
     );
     return row ? rowToAttempt(row) : null;
   }
@@ -331,16 +334,16 @@ export class D1PaymentRequestReceiveAttemptRepository
     state: PaymentRequestReceiveAttemptState,
   ): Promise<PaymentRequestReceiveAttempt[]> {
     const rows = await this.db.all<AttemptRow>(
-      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE state = ?',
-      [state],
+      'SELECT * FROM coco_cashu_payment_request_receive_attempts WHERE local_name = ? AND state = ?',
+      [this.db.localName, state],
     );
     return rows.map(rowToAttempt);
   }
 
   async delete(id: string): Promise<void> {
     await this.db.run(
-      'DELETE FROM coco_cashu_payment_request_receive_attempts WHERE id = ?',
-      [id],
+      'DELETE FROM coco_cashu_payment_request_receive_attempts WHERE local_name = ? AND id = ?',
+      [this.db.localName, id],
     );
   }
 }

@@ -35,7 +35,8 @@ type HistoryProjectionRow = {
   error: string | null;
 };
 
-const projectionSelect = `
+function buildProjectionSelect(ln: string): string {
+  return `
   SELECT *
   FROM (
     SELECT
@@ -58,7 +59,7 @@ const projectionSelect = `
       NULL AS remoteState,
       error
     FROM coco_cashu_send_operations
-    WHERE state != 'init'
+    WHERE local_name = '${ln}' AND state != 'init'
 
     UNION ALL
 
@@ -82,7 +83,7 @@ const projectionSelect = `
       NULL AS remoteState,
       error
     FROM coco_cashu_melt_operations
-    WHERE state IN ('prepared', 'executing', 'pending', 'finalized', 'rolling_back', 'rolled_back')
+    WHERE local_name = '${ln}' AND state IN ('prepared', 'executing', 'pending', 'finalized', 'rolling_back', 'rolled_back')
 
     UNION ALL
 
@@ -107,10 +108,11 @@ const projectionSelect = `
       op.error
     FROM coco_cashu_mint_operations op
     LEFT JOIN coco_cashu_canonical_mint_quotes q
-      ON q.mintUrl = op.mintUrl
+      ON q.local_name = op.local_name
+     AND q.mintUrl = op.mintUrl
      AND q.method = op.method
      AND q.quoteId = op.quoteId
-    WHERE op.state != 'init'
+    WHERE op.local_name = '${ln}' AND op.state != 'init'
 
     UNION ALL
 
@@ -134,7 +136,7 @@ const projectionSelect = `
       NULL AS remoteState,
       error
     FROM coco_cashu_receive_operations
-    WHERE state IN ('finalized', 'rolled_back')
+    WHERE local_name = '${ln}' AND state IN ('finalized', 'rolled_back')
 
     UNION ALL
 
@@ -158,16 +160,16 @@ const projectionSelect = `
       NULL AS remoteState,
       NULL AS error
     FROM coco_cashu_history h
-    WHERE NOT (
+    WHERE h.local_name = '${ln}' AND NOT (
       h.operationId IS NOT NULL AND EXISTS (
         SELECT 1 FROM (
           SELECT 'send' AS type, id AS operationId
           FROM coco_cashu_send_operations
-          WHERE state != 'init'
+          WHERE local_name = '${ln}' AND state != 'init'
           UNION ALL
           SELECT 'melt' AS type, id AS operationId
           FROM coco_cashu_melt_operations
-          WHERE state IN (
+          WHERE local_name = '${ln}' AND state IN (
             'prepared',
             'executing',
             'pending',
@@ -178,11 +180,11 @@ const projectionSelect = `
           UNION ALL
           SELECT 'mint' AS type, id AS operationId
           FROM coco_cashu_mint_operations
-          WHERE state != 'init'
+          WHERE local_name = '${ln}' AND state != 'init'
           UNION ALL
           SELECT 'receive' AS type, id AS operationId
           FROM coco_cashu_receive_operations
-          WHERE state IN ('finalized', 'rolled_back')
+          WHERE local_name = '${ln}' AND state IN ('finalized', 'rolled_back')
         ) op
         WHERE op.type = h.type AND op.operationId = h.operationId
       )
@@ -196,11 +198,11 @@ const projectionSelect = `
         FROM (
           SELECT 'mint' AS type, mintUrl, quoteId
           FROM coco_cashu_mint_operations
-          WHERE state != 'init'
+          WHERE local_name = '${ln}' AND state != 'init'
           UNION ALL
           SELECT 'melt' AS type, mintUrl, quoteId
           FROM coco_cashu_melt_operations
-          WHERE state IN (
+          WHERE local_name = '${ln}' AND state IN (
             'prepared',
             'executing',
             'pending',
@@ -213,7 +215,8 @@ const projectionSelect = `
       )
     )
   )
-`;
+  `;
+}
 
 function parseToken(tokenJson: string | null): Token | undefined {
   return tokenJson ? deserializeToken(JSON.parse(tokenJson)) : undefined;
@@ -260,6 +263,7 @@ export class D1HistoryRepository implements HistoryRepository {
   }
 
   async getPaginatedHistoryEntries(limit: number, offset: number): Promise<HistoryEntry[]> {
+    const projectionSelect = buildProjectionSelect(this.db.localName);
     const rows = await this.db.all<HistoryProjectionRow>(
       `${projectionSelect}
        ORDER BY createdAt DESC, id DESC
@@ -273,6 +277,8 @@ export class D1HistoryRepository implements HistoryRepository {
   async getHistoryEntryById(id: string): Promise<HistoryEntry | null> {
     const parsed = parseHistoryEntryId(id);
     if (!parsed) return null;
+
+    const projectionSelect = buildProjectionSelect(this.db.localName);
 
     if (parsed.source === 'legacy') {
       const row = await this.db.get<HistoryProjectionRow>(

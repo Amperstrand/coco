@@ -89,8 +89,8 @@ export class D1MeltQuoteRepository implements MeltQuoteRepository {
               payment_preimage, fee_options_json, outpoint, changeJson, lastObservedRemoteState, lastObservedRemoteStateAt,
               createdAt, updatedAt
        FROM coco_cashu_melt_quotes
-       WHERE mintUrl = ? AND method = ? AND quoteId = ? LIMIT 1`,
-      [normalizeMintUrl(mintUrl), method, quoteId],
+       WHERE local_name = ? AND mintUrl = ? AND method = ? AND quoteId = ? LIMIT 1`,
+      [this.db.localName, normalizeMintUrl(mintUrl), method, quoteId],
     );
     return row ? rowToQuote(row) : null;
   }
@@ -99,11 +99,11 @@ export class D1MeltQuoteRepository implements MeltQuoteRepository {
     const now = Date.now();
     await this.db.run(
       `INSERT INTO coco_cashu_melt_quotes
-         (mintUrl, method, quoteId, state, request, amount, unit, fee_reserve, expiry,
+         (local_name, mintUrl, method, quoteId, state, request, amount, unit, fee_reserve, expiry,
           payment_preimage, fee_options_json, outpoint, changeJson, lastObservedRemoteState,
           lastObservedRemoteStateAt, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(mintUrl, method, quoteId) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(local_name, mintUrl, method, quoteId) DO UPDATE SET
          state=excluded.state,
          request=excluded.request,
          amount=excluded.amount,
@@ -118,6 +118,7 @@ export class D1MeltQuoteRepository implements MeltQuoteRepository {
          lastObservedRemoteStateAt=excluded.lastObservedRemoteStateAt,
          updatedAt=excluded.updatedAt`,
       [
+        this.db.localName,
         normalizeMintUrl(quote.mintUrl),
         quote.method,
         quote.quoteId,
@@ -152,8 +153,8 @@ export class D1MeltQuoteRepository implements MeltQuoteRepository {
               payment_preimage, fee_options_json, outpoint, changeJson, lastObservedRemoteState, lastObservedRemoteStateAt,
               createdAt, updatedAt
        FROM coco_cashu_melt_quotes
-       WHERE state != 'PAID' ${method ? 'AND method = ?' : ''}`,
-      method ? [method] : [],
+       WHERE local_name = ? AND state != 'PAID' ${method ? 'AND method = ?' : ''}`,
+      method ? [this.db.localName, method] : [this.db.localName],
     );
     return rows.map(rowToQuote);
   }

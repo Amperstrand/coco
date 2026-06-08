@@ -104,12 +104,13 @@ function rowToOperation(row: SendOperationRow): SendOperation {
   }
 }
 
-function operationToParams(op: SendOperation): unknown[] {
+function operationToParams(ln: string, op: SendOperation): unknown[] {
   const createdAtSeconds = Math.floor(op.createdAt / 1000);
   const updatedAtSeconds = Math.floor(op.updatedAt / 1000);
 
   if (op.state === 'init') {
     return [
+      ln,
       op.id,
       op.mintUrl,
       serializeAmount(op.amount),
@@ -130,6 +131,7 @@ function operationToParams(op: SendOperation): unknown[] {
   }
 
   return [
+    ln,
     op.id,
     op.mintUrl,
     serializeAmount(op.amount),
@@ -158,26 +160,26 @@ export class D1SendOperationRepository implements SendOperationRepository {
 
   async create(operation: SendOperation): Promise<void> {
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_send_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_send_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (exists) {
       throw new Error(`SendOperation with id ${operation.id} already exists`);
     }
 
-    const params = operationToParams(operation);
+    const params = operationToParams(this.db.localName, operation);
     await this.db.run(
       `INSERT INTO coco_cashu_send_operations
-        (id, mintUrl, amount, unit, state, createdAt, updatedAt, error, method, methodDataJson, needsSwap, fee, inputAmount, inputProofSecretsJson, outputDataJson, tokenJson)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (local_name, id, mintUrl, amount, unit, state, createdAt, updatedAt, error, method, methodDataJson, needsSwap, fee, inputAmount, inputProofSecretsJson, outputDataJson, tokenJson)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params,
     );
   }
 
   async update(operation: SendOperation): Promise<void> {
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_send_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_send_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (!exists) {
       throw new Error(`SendOperation with id ${operation.id} not found`);
@@ -189,14 +191,14 @@ export class D1SendOperationRepository implements SendOperationRepository {
       await this.db.run(
         `UPDATE coco_cashu_send_operations
          SET state = ?, updatedAt = ?, error = ?, unit = ?
-         WHERE id = ?`,
-        [operation.state, updatedAtSeconds, operation.error ?? null, operation.unit, operation.id],
+         WHERE local_name = ? AND id = ?`,
+        [operation.state, updatedAtSeconds, operation.error ?? null, operation.unit, this.db.localName, operation.id],
       );
     } else {
       await this.db.run(
         `UPDATE coco_cashu_send_operations
          SET state = ?, updatedAt = ?, error = ?, unit = ?, needsSwap = ?, fee = ?, inputAmount = ?, inputProofSecretsJson = ?, outputDataJson = ?, tokenJson = ?
-         WHERE id = ?`,
+         WHERE local_name = ? AND id = ?`,
         [
           operation.state,
           updatedAtSeconds,
@@ -208,6 +210,7 @@ export class D1SendOperationRepository implements SendOperationRepository {
           JSON.stringify(operation.inputProofSecrets),
           operation.outputData ? JSON.stringify(operation.outputData) : null,
           serializeToken(operation),
+          this.db.localName,
           operation.id,
         ],
       );
@@ -216,36 +219,37 @@ export class D1SendOperationRepository implements SendOperationRepository {
 
   async getById(id: string): Promise<SendOperation | null> {
     const row = await this.db.get<SendOperationRow>(
-      'SELECT * FROM coco_cashu_send_operations WHERE id = ?',
-      [id],
+      'SELECT * FROM coco_cashu_send_operations WHERE local_name = ? AND id = ?',
+      [this.db.localName, id],
     );
     return row ? rowToOperation(row) : null;
   }
 
   async getByState(state: SendOperationState): Promise<SendOperation[]> {
     const rows = await this.db.all<SendOperationRow>(
-      'SELECT * FROM coco_cashu_send_operations WHERE state = ?',
-      [state],
+      'SELECT * FROM coco_cashu_send_operations WHERE local_name = ? AND state = ?',
+      [this.db.localName, state],
     );
     return rows.map(rowToOperation);
   }
 
   async getPending(): Promise<SendOperation[]> {
     const rows = await this.db.all<SendOperationRow>(
-      `SELECT * FROM coco_cashu_send_operations WHERE state IN ('executing', 'pending', 'rolling_back')`,
+      `SELECT * FROM coco_cashu_send_operations WHERE local_name = ? AND state IN ('executing', 'pending', 'rolling_back')`,
+      [this.db.localName],
     );
     return rows.map(rowToOperation);
   }
 
   async getByMintUrl(mintUrl: string): Promise<SendOperation[]> {
     const rows = await this.db.all<SendOperationRow>(
-      'SELECT * FROM coco_cashu_send_operations WHERE mintUrl = ?',
-      [mintUrl],
+      'SELECT * FROM coco_cashu_send_operations WHERE local_name = ? AND mintUrl = ?',
+      [this.db.localName, mintUrl],
     );
     return rows.map(rowToOperation);
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.run('DELETE FROM coco_cashu_send_operations WHERE id = ?', [id]);
+    await this.db.run('DELETE FROM coco_cashu_send_operations WHERE local_name = ? AND id = ?', [this.db.localName, id]);
   }
 }

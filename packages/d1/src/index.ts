@@ -41,6 +41,8 @@ import {
 export interface D1RepositoriesOptions {
   /** Cloudflare D1 database binding */
   d1Database: D1Database;
+  /** Tenant identifier for multi-tenancy row-level isolation */
+  localName: string;
 }
 
 /**
@@ -75,7 +77,7 @@ export class D1Repositories implements Repositories {
   readonly db: D1Db;
 
   constructor(options: D1RepositoriesOptions) {
-    this.db = new D1Db(options.d1Database);
+    this.db = new D1Db(options.d1Database, options.localName);
     this.mintRepository = new D1MintRepository(this.db);
     this.keyRingRepository = new D1KeyRingRepository(this.db);
     this.counterRepository = new D1CounterRepository(this.db);

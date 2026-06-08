@@ -34,8 +34,8 @@ export class D1KeyRingRepository implements KeyRingRepository {
     const row = await this.db.get<KeypairRow>(
       `SELECT publicKey, secretKey, derivationIndex, purpose
        FROM coco_cashu_keypairs
-       WHERE publicKey = ? ${purpose ? 'AND purpose = ?' : ''} LIMIT 1`,
-      purpose ? [publicKey, purpose] : [publicKey],
+       WHERE local_name = ? AND publicKey = ? ${purpose ? 'AND purpose = ?' : ''} LIMIT 1`,
+      purpose ? [this.db.localName, publicKey, purpose] : [this.db.localName, publicKey],
     );
     if (!row) return null;
 
@@ -55,28 +55,28 @@ export class D1KeyRingRepository implements KeyRingRepository {
     const purpose = keyPair.purpose ?? DEFAULT_KEYPAIR_PURPOSE;
 
     await this.db.run(
-      `INSERT INTO coco_cashu_keypairs (publicKey, secretKey, createdAt, derivationIndex, purpose)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(publicKey) DO UPDATE SET
+      `INSERT INTO coco_cashu_keypairs (local_name, publicKey, secretKey, createdAt, derivationIndex, purpose)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(local_name, publicKey) DO UPDATE SET
          secretKey=excluded.secretKey,
          derivationIndex=COALESCE(excluded.derivationIndex, coco_cashu_keypairs.derivationIndex),
          purpose=excluded.purpose`,
-      [keyPair.publicKeyHex, secretKeyHex, Date.now(), keyPair.derivationIndex ?? null, purpose],
+      [this.db.localName, keyPair.publicKeyHex, secretKeyHex, Date.now(), keyPair.derivationIndex ?? null, purpose],
     );
   }
 
   async deletePersistedKeyPair(publicKey: string, purpose?: KeypairPurpose): Promise<void> {
     await this.db.run(
-      `DELETE FROM coco_cashu_keypairs WHERE publicKey = ? ${purpose ? 'AND purpose = ?' : ''}`,
-      purpose ? [publicKey, purpose] : [publicKey],
+      `DELETE FROM coco_cashu_keypairs WHERE local_name = ? AND publicKey = ? ${purpose ? 'AND purpose = ?' : ''}`,
+      purpose ? [this.db.localName, publicKey, purpose] : [this.db.localName, publicKey],
     );
   }
 
   async getAllPersistedKeyPairs(purpose?: KeypairPurpose): Promise<Keypair[]> {
     const rows = await this.db.all<KeypairRow>(
       `SELECT publicKey, secretKey, derivationIndex, purpose
-       FROM coco_cashu_keypairs ${purpose ? 'WHERE purpose = ?' : ''}`,
-      purpose ? [purpose] : [],
+       FROM coco_cashu_keypairs WHERE local_name = ? ${purpose ? 'AND purpose = ?' : ''}`,
+      purpose ? [this.db.localName, purpose] : [this.db.localName],
     );
 
     return rows.map((row) => {
@@ -96,9 +96,9 @@ export class D1KeyRingRepository implements KeyRingRepository {
     const row = await this.db.get<KeypairRow>(
       `SELECT publicKey, secretKey, derivationIndex, purpose
        FROM coco_cashu_keypairs
-       ${purpose ? 'WHERE purpose = ?' : ''}
+       WHERE local_name = ? ${purpose ? 'AND purpose = ?' : ''}
        ORDER BY createdAt DESC LIMIT 1`,
-      purpose ? [purpose] : [],
+      purpose ? [this.db.localName, purpose] : [this.db.localName],
     );
     if (!row) return null;
 
@@ -116,9 +116,9 @@ export class D1KeyRingRepository implements KeyRingRepository {
   async getLastDerivationIndex(purpose?: KeypairPurpose): Promise<number> {
     const row = await this.db.get<{ derivationIndex: number }>(
       `SELECT derivationIndex FROM coco_cashu_keypairs
-       WHERE derivationIndex IS NOT NULL ${purpose ? 'AND purpose = ?' : ''}
+       WHERE local_name = ? AND derivationIndex IS NOT NULL ${purpose ? 'AND purpose = ?' : ''}
        ORDER BY derivationIndex DESC LIMIT 1`,
-      purpose ? [purpose] : [],
+      purpose ? [this.db.localName, purpose] : [this.db.localName],
     );
     return row?.derivationIndex ?? -1;
   }

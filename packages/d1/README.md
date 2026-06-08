@@ -19,7 +19,7 @@ import { D1Repositories } from '@amperstrand/coco-d1';
 // In your Cloudflare Worker, D1 is available as an env binding
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const repositories = new D1Repositories({ d1Database: env.DB });
+    const repositories = new D1Repositories({ d1Database: env.DB, localName: 'user-identifier' });
     await repositories.init();
 
     const manager = await initializeCoco({

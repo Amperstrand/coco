@@ -18,8 +18,8 @@ export class D1KeysetRepository implements KeysetRepository {
       feePpk: number;
       updatedAt: number;
     }>(
-      'SELECT mintUrl, id, unit, keypairs, active, feePpk, updatedAt FROM coco_cashu_keysets WHERE mintUrl = ?',
-      [mintUrl],
+      'SELECT mintUrl, id, unit, keypairs, active, feePpk, updatedAt FROM coco_cashu_keysets WHERE local_name = ? AND mintUrl = ?',
+      [this.db.localName, mintUrl],
     );
     return rows.map(
       (r) =>
@@ -45,8 +45,8 @@ export class D1KeysetRepository implements KeysetRepository {
       feePpk: number;
       updatedAt: number;
     }>(
-      'SELECT mintUrl, id, unit, keypairs, active, feePpk, updatedAt FROM coco_cashu_keysets WHERE mintUrl = ? AND id = ? LIMIT 1',
-      [mintUrl, id],
+      'SELECT mintUrl, id, unit, keypairs, active, feePpk, updatedAt FROM coco_cashu_keysets WHERE local_name = ? AND mintUrl = ? AND id = ? LIMIT 1',
+      [this.db.localName, mintUrl, id],
     );
     if (!row) return null;
     return {
@@ -63,13 +63,14 @@ export class D1KeysetRepository implements KeysetRepository {
   async updateKeyset(keyset: Omit<Keyset, 'keypairs' | 'updatedAt'>): Promise<void> {
     const now = getUnixTimeSeconds();
     const existing = await this.db.get<{ keypairs: string }>(
-      'SELECT keypairs FROM coco_cashu_keysets WHERE mintUrl = ? AND id = ? LIMIT 1',
-      [keyset.mintUrl, keyset.id],
+      'SELECT keypairs FROM coco_cashu_keysets WHERE local_name = ? AND mintUrl = ? AND id = ? LIMIT 1',
+      [this.db.localName, keyset.mintUrl, keyset.id],
     );
     if (!existing) {
       await this.db.run(
-        'INSERT INTO coco_cashu_keysets (mintUrl, id, unit, keypairs, active, feePpk, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO coco_cashu_keysets (local_name, mintUrl, id, unit, keypairs, active, feePpk, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [
+          this.db.localName,
           keyset.mintUrl,
           keyset.id,
           keyset.unit,
@@ -82,23 +83,24 @@ export class D1KeysetRepository implements KeysetRepository {
       return;
     }
     await this.db.run(
-      'UPDATE coco_cashu_keysets SET unit = ?, active = ?, feePpk = ?, updatedAt = ? WHERE mintUrl = ? AND id = ?',
-      [keyset.unit, keyset.active ? 1 : 0, keyset.feePpk, now, keyset.mintUrl, keyset.id],
+      'UPDATE coco_cashu_keysets SET unit = ?, active = ?, feePpk = ?, updatedAt = ? WHERE local_name = ? AND mintUrl = ? AND id = ?',
+      [keyset.unit, keyset.active ? 1 : 0, keyset.feePpk, now, this.db.localName, keyset.mintUrl, keyset.id],
     );
   }
 
   async addKeyset(keyset: Omit<Keyset, 'updatedAt'>): Promise<void> {
     const now = getUnixTimeSeconds();
     await this.db.run(
-      `INSERT INTO coco_cashu_keysets (mintUrl, id, unit, keypairs, active, feePpk, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(mintUrl, id) DO UPDATE SET
+      `INSERT INTO coco_cashu_keysets (local_name, mintUrl, id, unit, keypairs, active, feePpk, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(local_name, mintUrl, id) DO UPDATE SET
          unit=excluded.unit,
          keypairs=excluded.keypairs,
          active=excluded.active,
          feePpk=excluded.feePpk,
          updatedAt=excluded.updatedAt`,
       [
+        this.db.localName,
         keyset.mintUrl,
         keyset.id,
         keyset.unit,
@@ -111,7 +113,8 @@ export class D1KeysetRepository implements KeysetRepository {
   }
 
   async deleteKeyset(mintUrl: string, keysetId: string): Promise<void> {
-    await this.db.run('DELETE FROM coco_cashu_keysets WHERE mintUrl = ? AND id = ?', [
+    await this.db.run('DELETE FROM coco_cashu_keysets WHERE local_name = ? AND mintUrl = ? AND id = ?', [
+      this.db.localName,
       mintUrl,
       keysetId,
     ]);

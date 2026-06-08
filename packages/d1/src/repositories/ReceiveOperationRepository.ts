@@ -71,12 +71,13 @@ function rowToOperation(row: ReceiveOperationRow): ReceiveOperation {
   }
 }
 
-function operationToParams(op: ReceiveOperation): unknown[] {
+function operationToParams(ln: string, op: ReceiveOperation): unknown[] {
   const createdAtSeconds = Math.floor(op.createdAt / 1000);
   const updatedAtSeconds = Math.floor(op.updatedAt / 1000);
 
   if (op.state === 'init') {
     return [
+      ln,
       op.id,
       op.mintUrl,
       getOperationUnit(op),
@@ -93,6 +94,7 @@ function operationToParams(op: ReceiveOperation): unknown[] {
   }
 
   return [
+    ln,
     op.id,
     op.mintUrl,
     getOperationUnit(op),
@@ -117,26 +119,26 @@ export class D1ReceiveOperationRepository implements ReceiveOperationRepository 
 
   async create(operation: ReceiveOperation): Promise<void> {
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_receive_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_receive_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (exists) {
       throw new Error(`ReceiveOperation with id ${operation.id} already exists`);
     }
 
-    const params = operationToParams(operation);
+    const params = operationToParams(this.db.localName, operation);
     await this.db.run(
       `INSERT INTO coco_cashu_receive_operations
-        (id, mintUrl, unit, amount, state, createdAt, updatedAt, error, fee, inputProofsJson, outputDataJson, sourceJson)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (local_name, id, mintUrl, unit, amount, state, createdAt, updatedAt, error, fee, inputProofsJson, outputDataJson, sourceJson)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params,
     );
   }
 
   async update(operation: ReceiveOperation): Promise<void> {
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_receive_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_receive_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (!exists) {
       throw new Error(`ReceiveOperation with id ${operation.id} not found`);
@@ -148,7 +150,7 @@ export class D1ReceiveOperationRepository implements ReceiveOperationRepository 
       await this.db.run(
         `UPDATE coco_cashu_receive_operations
          SET state = ?, updatedAt = ?, error = ?, unit = ?, inputProofsJson = ?, sourceJson = ?
-         WHERE id = ?`,
+         WHERE local_name = ? AND id = ?`,
         [
           operation.state,
           updatedAtSeconds,
@@ -156,6 +158,7 @@ export class D1ReceiveOperationRepository implements ReceiveOperationRepository 
           getOperationUnit(operation),
           JSON.stringify(operation.inputProofs),
           operation.source ? JSON.stringify(operation.source) : null,
+          this.db.localName,
           operation.id,
         ],
       );
@@ -163,7 +166,7 @@ export class D1ReceiveOperationRepository implements ReceiveOperationRepository 
       await this.db.run(
         `UPDATE coco_cashu_receive_operations
          SET state = ?, updatedAt = ?, error = ?, unit = ?, fee = ?, inputProofsJson = ?, outputDataJson = ?, sourceJson = ?
-         WHERE id = ?`,
+         WHERE local_name = ? AND id = ?`,
         [
           operation.state,
           updatedAtSeconds,
@@ -173,6 +176,7 @@ export class D1ReceiveOperationRepository implements ReceiveOperationRepository 
           JSON.stringify(operation.inputProofs),
           operation.outputData ? JSON.stringify(operation.outputData) : null,
           operation.source ? JSON.stringify(operation.source) : null,
+          this.db.localName,
           operation.id,
         ],
       );
@@ -181,38 +185,40 @@ export class D1ReceiveOperationRepository implements ReceiveOperationRepository 
 
   async getById(id: string): Promise<ReceiveOperation | null> {
     const row = await this.db.get<ReceiveOperationRow>(
-      'SELECT * FROM coco_cashu_receive_operations WHERE id = ?',
-      [id],
+      'SELECT * FROM coco_cashu_receive_operations WHERE local_name = ? AND id = ?',
+      [this.db.localName, id],
     );
     return row ? rowToOperation(row) : null;
   }
 
   async getByState(state: ReceiveOperationState): Promise<ReceiveOperation[]> {
     const rows = await this.db.all<ReceiveOperationRow>(
-      'SELECT * FROM coco_cashu_receive_operations WHERE state = ?',
-      [state],
+      'SELECT * FROM coco_cashu_receive_operations WHERE local_name = ? AND state = ?',
+      [this.db.localName, state],
     );
     return rows.map(rowToOperation);
   }
 
   async getPending(): Promise<ReceiveOperation[]> {
     const rows = await this.db.all<ReceiveOperationRow>(
-      "SELECT * FROM coco_cashu_receive_operations WHERE state IN ('executing')",
+      "SELECT * FROM coco_cashu_receive_operations WHERE local_name = ? AND state IN ('executing')",
+      [this.db.localName],
     );
     return rows.map(rowToOperation);
   }
 
   async getByMintUrl(mintUrl: string): Promise<ReceiveOperation[]> {
     const rows = await this.db.all<ReceiveOperationRow>(
-      'SELECT * FROM coco_cashu_receive_operations WHERE mintUrl = ?',
-      [mintUrl],
+      'SELECT * FROM coco_cashu_receive_operations WHERE local_name = ? AND mintUrl = ?',
+      [this.db.localName, mintUrl],
     );
     return rows.map(rowToOperation);
   }
 
   async getByPaymentRequestAttemptId(attemptId: string): Promise<ReceiveOperation | null> {
     const rows = await this.db.all<ReceiveOperationRow>(
-      'SELECT * FROM coco_cashu_receive_operations WHERE sourceJson IS NOT NULL',
+      'SELECT * FROM coco_cashu_receive_operations WHERE local_name = ? AND sourceJson IS NOT NULL',
+      [this.db.localName],
     );
     const operation = rows
       .map(rowToOperation)
@@ -225,6 +231,6 @@ export class D1ReceiveOperationRepository implements ReceiveOperationRepository 
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.run('DELETE FROM coco_cashu_receive_operations WHERE id = ?', [id]);
+    await this.db.run('DELETE FROM coco_cashu_receive_operations WHERE local_name = ? AND id = ?', [this.db.localName, id]);
   }
 }

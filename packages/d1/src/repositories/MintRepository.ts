@@ -10,8 +10,8 @@ export class D1MintRepository implements MintRepository {
 
   async isTrustedMint(mintUrl: string): Promise<boolean> {
     const row = await this.db.get<{ trusted: number }>(
-      'SELECT trusted FROM coco_cashu_mints WHERE mintUrl = ? LIMIT 1',
-      [mintUrl],
+      'SELECT trusted FROM coco_cashu_mints WHERE local_name = ? AND mintUrl = ? LIMIT 1',
+      [this.db.localName, mintUrl],
     );
     return row?.trusted === 1;
   }
@@ -25,8 +25,8 @@ export class D1MintRepository implements MintRepository {
       createdAt: number;
       updatedAt: number;
     }>(
-      'SELECT mintUrl, name, mintInfo, trusted, createdAt, updatedAt FROM coco_cashu_mints WHERE mintUrl = ? LIMIT 1',
-      [mintUrl],
+      'SELECT mintUrl, name, mintInfo, trusted, createdAt, updatedAt FROM coco_cashu_mints WHERE local_name = ? AND mintUrl = ? LIMIT 1',
+      [this.db.localName, mintUrl],
     );
     if (!row) {
       throw new Error(`Mint not found: ${mintUrl}`);
@@ -49,7 +49,9 @@ export class D1MintRepository implements MintRepository {
       trusted: number;
       createdAt: number;
       updatedAt: number;
-    }>('SELECT mintUrl, name, mintInfo, trusted, createdAt, updatedAt FROM coco_cashu_mints');
+    }>('SELECT mintUrl, name, mintInfo, trusted, createdAt, updatedAt FROM coco_cashu_mints WHERE local_name = ?',
+      [this.db.localName],
+    );
     return rows.map(
       (r) =>
         ({
@@ -72,7 +74,8 @@ export class D1MintRepository implements MintRepository {
       createdAt: number;
       updatedAt: number;
     }>(
-      'SELECT mintUrl, name, mintInfo, trusted, createdAt, updatedAt FROM coco_cashu_mints WHERE trusted = 1',
+      'SELECT mintUrl, name, mintInfo, trusted, createdAt, updatedAt FROM coco_cashu_mints WHERE local_name = ? AND trusted = 1',
+      [this.db.localName],
     );
     return rows.map(
       (r) =>
@@ -89,15 +92,16 @@ export class D1MintRepository implements MintRepository {
 
   async addNewMint(mint: Mint): Promise<void> {
     await this.db.run(
-      `INSERT INTO coco_cashu_mints (mintUrl, name, mintInfo, trusted, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(mintUrl) DO UPDATE SET
+      `INSERT INTO coco_cashu_mints (local_name, mintUrl, name, mintInfo, trusted, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(local_name, mintUrl) DO UPDATE SET
          name=excluded.name,
          mintInfo=excluded.mintInfo,
          trusted=excluded.trusted,
          createdAt=excluded.createdAt,
          updatedAt=excluded.updatedAt`,
       [
+        this.db.localName,
         mint.mintUrl,
         mint.name,
         JSON.stringify(mint.mintInfo),
@@ -110,14 +114,15 @@ export class D1MintRepository implements MintRepository {
 
   async addOrUpdateMint(mint: Mint): Promise<void> {
     await this.db.run(
-      `INSERT INTO coco_cashu_mints (mintUrl, name, mintInfo, trusted, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(mintUrl) DO UPDATE SET
+      `INSERT INTO coco_cashu_mints (local_name, mintUrl, name, mintInfo, trusted, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(local_name, mintUrl) DO UPDATE SET
          name=excluded.name,
          mintInfo=excluded.mintInfo,
          trusted=excluded.trusted,
          updatedAt=excluded.updatedAt`,
       [
+        this.db.localName,
         mint.mintUrl,
         mint.name,
         JSON.stringify(mint.mintInfo),
@@ -133,13 +138,14 @@ export class D1MintRepository implements MintRepository {
   }
 
   async setMintTrusted(mintUrl: string, trusted: boolean): Promise<void> {
-    await this.db.run('UPDATE coco_cashu_mints SET trusted = ? WHERE mintUrl = ?', [
+    await this.db.run('UPDATE coco_cashu_mints SET trusted = ? WHERE local_name = ? AND mintUrl = ?', [
       trusted ? 1 : 0,
+      this.db.localName,
       mintUrl,
     ]);
   }
 
   async deleteMint(mintUrl: string): Promise<void> {
-    await this.db.run('DELETE FROM coco_cashu_mints WHERE mintUrl = ?', [mintUrl]);
+    await this.db.run('DELETE FROM coco_cashu_mints WHERE local_name = ? AND mintUrl = ?', [this.db.localName, mintUrl]);
   }
 }

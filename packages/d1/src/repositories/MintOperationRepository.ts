@@ -89,13 +89,14 @@ const rowToOperation = (row: MintOperationRow): MintOperation => {
   } as MintOperation;
 };
 
-const operationToParams = (operation: MintOperation): unknown[] => {
+const operationToParams = (ln: string, operation: MintOperation): unknown[] => {
   const createdAtSeconds = Math.floor(operation.createdAt / 1000);
   const updatedAtSeconds = Math.floor(operation.updatedAt / 1000);
   const methodDataJson = stringifyJson(operation.methodData);
 
   if (operation.state === 'init') {
     return [
+      ln,
       operation.id,
       operation.mintUrl,
       operation.quoteId,
@@ -118,6 +119,7 @@ const operationToParams = (operation: MintOperation): unknown[] => {
   }
 
   return [
+    ln,
     operation.id,
     operation.mintUrl,
     operation.quoteId,
@@ -148,26 +150,26 @@ export class D1MintOperationRepository implements MintOperationRepository {
 
   async create(operation: MintOperation): Promise<void> {
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_mint_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_mint_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (exists) {
       throw new Error(`MintOperation with id ${operation.id} already exists`);
     }
 
-    const params = operationToParams(operation);
+    const params = operationToParams(this.db.localName, operation);
     await this.db.run(
       `INSERT INTO coco_cashu_mint_operations
-        (id, mintUrl, quoteId, state, createdAt, updatedAt, error, method, methodDataJson, amount, unit, request, expiry, pubkey, lastObservedRemoteState, lastObservedRemoteStateAt, terminalFailureJson, outputDataJson)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (local_name, id, mintUrl, quoteId, state, createdAt, updatedAt, error, method, methodDataJson, amount, unit, request, expiry, pubkey, lastObservedRemoteState, lastObservedRemoteStateAt, terminalFailureJson, outputDataJson)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params,
     );
   }
 
   async update(operation: MintOperation): Promise<void> {
     const exists = await this.db.get<{ id: string }>(
-      'SELECT id FROM coco_cashu_mint_operations WHERE id = ? LIMIT 1',
-      [operation.id],
+      'SELECT id FROM coco_cashu_mint_operations WHERE local_name = ? AND id = ? LIMIT 1',
+      [this.db.localName, operation.id],
     );
     if (!exists) {
       throw new Error(`MintOperation with id ${operation.id} not found`);
@@ -179,7 +181,7 @@ export class D1MintOperationRepository implements MintOperationRepository {
       await this.db.run(
         `UPDATE coco_cashu_mint_operations
          SET quoteId = ?, state = ?, updatedAt = ?, error = ?, method = ?, methodDataJson = ?, amount = ?, unit = ?, terminalFailureJson = ?
-         WHERE id = ?`,
+         WHERE local_name = ? AND id = ?`,
         [
           operation.quoteId,
           operation.state,
@@ -190,6 +192,7 @@ export class D1MintOperationRepository implements MintOperationRepository {
           serializeAmount(operation.amount),
           operation.unit,
           operation.terminalFailure ? JSON.stringify(operation.terminalFailure) : null,
+          this.db.localName,
           operation.id,
         ],
       );
@@ -199,7 +202,7 @@ export class D1MintOperationRepository implements MintOperationRepository {
     await this.db.run(
       `UPDATE coco_cashu_mint_operations
        SET quoteId = ?, state = ?, updatedAt = ?, error = ?, method = ?, methodDataJson = ?, amount = ?, unit = ?, request = ?, expiry = ?, pubkey = ?, lastObservedRemoteState = ?, lastObservedRemoteStateAt = ?, terminalFailureJson = ?, outputDataJson = ?
-       WHERE id = ?`,
+       WHERE local_name = ? AND id = ?`,
       [
         operation.quoteId,
         operation.state,
@@ -216,6 +219,7 @@ export class D1MintOperationRepository implements MintOperationRepository {
         null,
         operation.terminalFailure ? JSON.stringify(operation.terminalFailure) : null,
         JSON.stringify(operation.outputData),
+        this.db.localName,
         operation.id,
       ],
     );
@@ -223,31 +227,32 @@ export class D1MintOperationRepository implements MintOperationRepository {
 
   async getById(id: string): Promise<MintOperation | null> {
     const row = await this.db.get<MintOperationRow>(
-      'SELECT * FROM coco_cashu_mint_operations WHERE id = ?',
-      [id],
+      'SELECT * FROM coco_cashu_mint_operations WHERE local_name = ? AND id = ?',
+      [this.db.localName, id],
     );
     return row ? rowToOperation(row) : null;
   }
 
   async getByState(state: MintOperationState): Promise<MintOperation[]> {
     const rows = await this.db.all<MintOperationRow>(
-      'SELECT * FROM coco_cashu_mint_operations WHERE state = ?',
-      [state],
+      'SELECT * FROM coco_cashu_mint_operations WHERE local_name = ? AND state = ?',
+      [this.db.localName, state],
     );
     return rows.map(rowToOperation);
   }
 
   async getPending(): Promise<MintOperation[]> {
     const rows = await this.db.all<MintOperationRow>(
-      "SELECT * FROM coco_cashu_mint_operations WHERE state IN ('pending', 'executing')",
+      "SELECT * FROM coco_cashu_mint_operations WHERE local_name = ? AND state IN ('pending', 'executing')",
+      [this.db.localName],
     );
     return rows.map(rowToOperation);
   }
 
   async getByMintUrl(mintUrl: string): Promise<MintOperation[]> {
     const rows = await this.db.all<MintOperationRow>(
-      'SELECT * FROM coco_cashu_mint_operations WHERE mintUrl = ?',
-      [mintUrl],
+      'SELECT * FROM coco_cashu_mint_operations WHERE local_name = ? AND mintUrl = ?',
+      [this.db.localName, mintUrl],
     );
     return rows.map(rowToOperation);
   }
@@ -259,14 +264,14 @@ export class D1MintOperationRepository implements MintOperationRepository {
   ): Promise<MintOperation[]> {
     const rows = await this.db.all<MintOperationRow>(
       `SELECT * FROM coco_cashu_mint_operations
-       WHERE mintUrl = ? AND method = ? AND quoteId = ?
+       WHERE local_name = ? AND mintUrl = ? AND method = ? AND quoteId = ?
        ORDER BY createdAt ASC, id ASC`,
-      [mintUrl, method, quoteId],
+      [this.db.localName, mintUrl, method, quoteId],
     );
     return rows.map(rowToOperation);
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.run('DELETE FROM coco_cashu_mint_operations WHERE id = ?', [id]);
+    await this.db.run('DELETE FROM coco_cashu_mint_operations WHERE local_name = ? AND id = ?', [this.db.localName, id]);
   }
 }
