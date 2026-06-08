@@ -336,10 +336,15 @@ const MIGRATION_ID = 'd1_fresh_schema_v1';
  * We still record a migration entry to prevent re-application.
  */
 export async function ensureSchema(db: D1Db): Promise<void> {
-  const existing = await db.get<{ id: string }>(
-    'SELECT id FROM coco_cashu_migrations WHERE id = ?',
-    [MIGRATION_ID],
-  );
+  let existing: { id: string } | undefined;
+  try {
+    existing = await db.get<{ id: string }>(
+      'SELECT id FROM coco_cashu_migrations WHERE id = ?',
+      [MIGRATION_ID],
+    );
+  } catch {
+    // Table doesn't exist yet — first run
+  }
 
   if (existing) return;
 
