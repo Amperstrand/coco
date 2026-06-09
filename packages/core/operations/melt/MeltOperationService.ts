@@ -626,19 +626,18 @@ export class MeltOperationService {
         }
       }
 
-      // 5. Warn about rolling_back operations (need manual intervention)
+      // 5. Recover rolling_back operations (crash during rollback)
       const rollingBackOps = await this.meltOperationRepository.getByState('rolling_back');
       for (const op of rollingBackOps) {
-        this.logger?.warn(
-          'Found operation stuck in rolling_back state. ' +
-            'This indicates a crash during rollback. Manual recovery may be needed.',
-          {
+        try {
+          await this.recoverRollingBackOperation(op as RollingBackMeltOperation);
+          rollingBackCount++;
+        } catch (e) {
+          this.logger?.error('Error recovering rolling_back melt operation', {
             operationId: op.id,
-            mintUrl: op.mintUrl,
-            method: op.method,
-          },
-        );
-        rollingBackCount++;
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
 
       this.logger?.info('Recovery completed', {
@@ -651,6 +650,25 @@ export class MeltOperationService {
     } finally {
       this.recoveryLock = null;
       releaseRecoveryLock!();
+    }
+  }
+
+  private async recoverRollingBackOperation(op: RollingBackMeltOperation): Promise<void> {
+    // Melt rollback is DB-only (no network calls), so retrying handler.rollback() is safe.
+    const handler = this.handlerProvider.get(op.method);
+    const { wallet } = await this.walletService.getWalletWithActiveKeysetId(op.mintUrl, op.unit);
+
+    if (handler.rollback) {
+      await handler.rollback({
+        ...this.buildDeps(),
+        operation: op,
+        wallet,
+      });
+      await this.markAsRolledBack(op, 'Recovered: melt rollback retried after crash');
+    } else {
+      // No rollback handler — release reservations and force fail
+      await this.proofService.releaseProofs(op.mintUrl, op.inputProofSecrets);
+      await this.markAsRolledBack(op, 'Recovered: no rollback handler, reservations released');
     }
   }
 
