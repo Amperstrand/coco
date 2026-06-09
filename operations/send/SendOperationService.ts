@@ -581,24 +581,18 @@ export class SendOperationService {
         }
       }
 
-      // 5. Warn about rolling_back operations (need manual intervention)
-      // TODO: Implement automatic recovery for rolling_back operations.
-      // This requires storing the reclaim OutputData before the swap so we can
-      // recover proofs via the mint's restore endpoint if the swap succeeded
-      // but we crashed before saving the reclaimed proofs.
-      // For now, users need to manually recover via seed restore if this happens.
+      // 5. Recover rolling_back operations (crash during rollback)
       const rollingBackOps = await this.sendOperationRepository.getByState('rolling_back');
       for (const op of rollingBackOps) {
-        this.logger?.warn(
-          'Found operation stuck in rolling_back state. ' +
-            'This indicates a crash during rollback. Manual recovery via seed restore may be needed.',
-          {
+        try {
+          await this.recoverRollingBackOperation(op as RollingBackSendOperation);
+          rollingBackCount++;
+        } catch (e) {
+          this.logger?.error('Error recovering rolling_back operation', {
             operationId: op.id,
-            mintUrl: op.mintUrl,
-            amount: op.amount,
-          },
-        );
-        rollingBackCount++;
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
 
       // 7. Clean up orphaned proof reservations
@@ -708,6 +702,114 @@ export class SendOperationService {
         error: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
       });
     }
+  }
+
+  private async recoverRollingBackOperation(op: RollingBackSendOperation): Promise<void> {
+    const handler = this.handlerProvider.get(op.method);
+    if (!handler.rollback) {
+      await this.forceFailRollingBack(op, 'No rollback handler available');
+      return;
+    }
+
+    const { wallet } = await this.walletService.getWalletWithActiveKeysetId(op.mintUrl, op.unit);
+    const sendSecrets = getSendProofSecrets(op);
+
+    if (!op.needsSwap || sendSecrets.length === 0) {
+      await this.retryRollback(op, handler, wallet);
+      return;
+    }
+
+    // Swap-based rollback: check if reclaim already completed
+    const existingProofs = await this.proofRepository.getProofsByOperationId(op.mintUrl, op.id);
+    const hasReclaimedProofs = existingProofs.some(
+      (p) => p.state === 'ready' && sendSecrets.includes(p.secret) === false && p.createdByOperationId === op.id,
+    );
+
+    if (hasReclaimedProofs) {
+      // Reclaim swap already completed before crash — just finish cleanup
+      const sendProofs = existingProofs.filter((p) => sendSecrets.includes(p.secret));
+      if (sendProofs.length > 0) {
+        await this.proofService.setProofState(
+          op.mintUrl,
+          sendProofs.map((p) => p.secret),
+          'spent',
+        );
+      }
+      await this.proofService.releaseProofs(op.mintUrl, op.inputProofSecrets);
+      const keepSecrets = getKeepProofSecrets(op);
+      if (keepSecrets.length > 0) {
+        await this.proofService.releaseProofs(op.mintUrl, keepSecrets);
+      }
+      await this.markAsRolledBack(op, 'Recovered: rollback completed before crash');
+      return;
+    }
+
+    // Reclaim not yet done — check if send proofs were spent on mint
+    try {
+      const sendProofStates = await wallet.checkProofsStates(
+        sendSecrets.map((s) => ({ secret: s })),
+      );
+      const allSpent = sendProofStates.every((s) => s.state === 'SPENT');
+
+      if (allSpent) {
+        // Send proofs spent on mint but reclaim swap didn't complete locally.
+        // The proofs exist on the mint — use recoverProofsFromOutputData to reclaim them.
+        if (op.outputData) {
+          await this.proofService.recoverProofsFromOutputData(op.mintUrl, op.outputData, {
+            unit: op.unit,
+            createdByOperationId: op.id,
+          });
+          await this.proofService.setProofState(op.mintUrl, op.inputProofSecrets, 'spent');
+          await this.proofService.releaseProofs(op.mintUrl, op.inputProofSecrets);
+          const keepSecrets = getKeepProofSecrets(op);
+          if (keepSecrets.length > 0) {
+            await this.proofService.releaseProofs(op.mintUrl, keepSecrets);
+          }
+          await this.markAsRolledBack(op, 'Recovered: proofs restored from mint after crash');
+          return;
+        }
+        // No outputData — can't reclaim, force fail
+        await this.forceFailRollingBack(op, 'Rollback crashed after mint swap, no outputData for recovery');
+        return;
+      }
+    } catch {
+      // Mint unreachable — leave for next recovery cycle
+      this.logger?.warn('Could not reach mint for rolling_back recovery, will retry later', {
+        operationId: op.id,
+        mintUrl: op.mintUrl,
+      });
+      throw new Error('Mint unreachable during rolling_back recovery');
+    }
+
+    // Send proofs not spent — safe to retry full rollback
+    await this.retryRollback(op, handler, wallet);
+  }
+
+  private async retryRollback(
+    op: RollingBackSendOperation,
+    handler: { rollback: NonNullable<(typeof handler)['rollback']> },
+    wallet: any,
+  ): Promise<void> {
+    await handler.rollback({
+      ...this.buildDeps(),
+      operation: op,
+      wallet,
+    });
+    await this.markAsRolledBack(op, 'Recovered: rollback retried after crash');
+  }
+
+  private async forceFailRollingBack(op: RollingBackSendOperation, reason: string): Promise<void> {
+    // Release any remaining reservations as a last resort
+    await this.proofService.releaseProofs(op.mintUrl, op.inputProofSecrets);
+    const keepSecrets = getKeepProofSecrets(op);
+    if (keepSecrets.length > 0) {
+      await this.proofService.releaseProofs(op.mintUrl, keepSecrets);
+    }
+    const sendSecrets = getSendProofSecrets(op);
+    if (sendSecrets.length > 0) {
+      await this.proofService.releaseProofs(op.mintUrl, sendSecrets);
+    }
+    await this.markAsRolledBack(op, reason);
   }
 
   /**
