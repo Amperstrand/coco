@@ -84,36 +84,47 @@ export class D1ProofRepository implements ProofRepository {
       unit: normalizeProofUnit(proof),
     }));
 
-    const selectSql =
-      'SELECT 1 AS x FROM coco_cashu_proofs WHERE local_name = ? AND mintUrl = ? AND secret = ? LIMIT 1';
-    for (const p of normalizedProofs) {
-      const exists = await this.db.get<{ x: number }>(selectSql, [this.db.localName, mintUrl, p.secret]);
-      if (exists) {
-        throw new Error(`Proof with secret already exists: ${p.secret}`);
+    // Batch existence check using IN clause (chunked for D1 query size limits)
+    for (let i = 0; i < normalizedProofs.length; i += MAX_PROOF_SECRET_LOOKUP_BATCH_SIZE) {
+      const chunk = normalizedProofs.slice(i, i + MAX_PROOF_SECRET_LOOKUP_BATCH_SIZE);
+      const secrets = chunk.map((p) => p.secret);
+      const placeholders = secrets.map(() => '?').join(', ');
+      const existing = await this.db.all<{ secret: string }>(
+        `SELECT secret FROM coco_cashu_proofs WHERE local_name = ? AND mintUrl = ? AND secret IN (${placeholders})`,
+        [this.db.localName, mintUrl, ...secrets],
+      );
+      if (existing.length > 0) {
+        throw new Error(
+          `Proofs with secrets already exist: ${existing.map((r) => r.secret).join(', ')}`,
+        );
       }
     }
 
+    // Batch INSERT via db.batch() — single atomic round-trip instead of N sequential INSERTs
     const insertSql =
       'INSERT INTO coco_cashu_proofs (local_name, mintUrl, id, unit, amount, secret, C, dleqJson, witnessJson, state, createdAt, usedByOperationId, createdByOperationId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-    for (const p of normalizedProofs) {
+    const stmts = normalizedProofs.map((p) => {
       const dleqJson = p.dleq ? JSON.stringify(p.dleq) : null;
       const witnessJson = p.witness ? JSON.stringify(p.witness) : null;
-      await this.db.run(insertSql, [
-        this.db.localName,
-        mintUrl,
-        p.id,
-        p.unit,
-        serializeAmount(p.amount),
-        p.secret,
-        p.C,
-        dleqJson,
-        witnessJson,
-        p.state,
-        now,
-        p.usedByOperationId ?? null,
-        p.createdByOperationId ?? null,
-      ]);
-    }
+      return this.db
+        .prepare(insertSql)
+        .bind(
+          this.db.localName,
+          mintUrl,
+          p.id,
+          p.unit,
+          serializeAmount(p.amount),
+          p.secret,
+          p.C,
+          dleqJson,
+          witnessJson,
+          p.state,
+          now,
+          p.usedByOperationId ?? null,
+          p.createdByOperationId ?? null,
+        );
+    });
+    await this.db.batch(stmts);
   }
 
   async getReadyProofs(mintUrl: string, filter?: ProofUnitFilter): Promise<CoreProof[]> {
@@ -190,18 +201,22 @@ export class D1ProofRepository implements ProofRepository {
 
   async setProofState(mintUrl: string, secrets: string[], state: ProofState): Promise<void> {
     if (!secrets || secrets.length === 0) return;
-    const updateSql = 'UPDATE coco_cashu_proofs SET state = ? WHERE local_name = ? AND mintUrl = ? AND secret = ?';
-    for (const s of secrets) {
-      await this.db.run(updateSql, [state, this.db.localName, mintUrl, s]);
-    }
+    const stmts = secrets.map((s) =>
+      this.db
+        .prepare('UPDATE coco_cashu_proofs SET state = ? WHERE local_name = ? AND mintUrl = ? AND secret = ?')
+        .bind(state, this.db.localName, mintUrl, s),
+    );
+    await this.db.batch(stmts);
   }
 
   async deleteProofs(mintUrl: string, secrets: string[]): Promise<void> {
     if (!secrets || secrets.length === 0) return;
-    const delSql = 'DELETE FROM coco_cashu_proofs WHERE local_name = ? AND mintUrl = ? AND secret = ?';
-    for (const s of secrets) {
-      await this.db.run(delSql, [this.db.localName, mintUrl, s]);
-    }
+    const stmts = secrets.map((s) =>
+      this.db
+        .prepare('DELETE FROM coco_cashu_proofs WHERE local_name = ? AND mintUrl = ? AND secret = ?')
+        .bind(this.db.localName, mintUrl, s),
+    );
+    await this.db.batch(stmts);
   }
 
   async wipeProofsByKeysetId(mintUrl: string, keysetId: string): Promise<void> {
@@ -215,41 +230,45 @@ export class D1ProofRepository implements ProofRepository {
   async reserveProofs(mintUrl: string, secrets: string[], operationId: string): Promise<void> {
     if (!secrets || secrets.length === 0) return;
 
-    const selectSql =
-      'SELECT secret, state, usedByOperationId FROM coco_cashu_proofs WHERE local_name = ? AND mintUrl = ? AND secret = ?';
-    for (const secret of secrets) {
-      const row = await this.db.get<{
-        secret: string;
-        state: string;
-        usedByOperationId: string | null;
-      }>(selectSql, [this.db.localName, mintUrl, secret]);
-      if (!row) {
-        throw new Error(`Proof with secret not found: ${secret}`);
-      }
-      if (row.state !== 'ready') {
-        throw new Error(`Proof is not ready, cannot reserve: ${secret}`);
-      }
-      if (row.usedByOperationId) {
-        throw new Error(
-          `Proof already reserved by operation ${row.usedByOperationId}: ${secret}`,
-        );
-      }
-    }
+    // Atomic conditional UPDATE — only reserves if state='ready' AND usedByOperationId IS NULL.
+    // This eliminates the TOCTOU race that existed with the previous SELECT→UPDATE pattern.
+    const stmts = secrets.map((secret) =>
+      this.db
+        .prepare(
+          "UPDATE coco_cashu_proofs SET usedByOperationId = ? WHERE local_name = ? AND mintUrl = ? AND secret = ? AND state = 'ready' AND usedByOperationId IS NULL",
+        )
+        .bind(operationId, this.db.localName, mintUrl, secret),
+    );
 
-    const updateSql =
-      'UPDATE coco_cashu_proofs SET usedByOperationId = ? WHERE local_name = ? AND mintUrl = ? AND secret = ?';
-    for (const secret of secrets) {
-      await this.db.run(updateSql, [operationId, this.db.localName, mintUrl, secret]);
+    const results = await this.db.batch(stmts);
+
+    // Verify all proofs were reserved — meta.changes > 0 means the WHERE matched
+    for (let i = 0; i < results.length; i++) {
+      if (!results[i]?.meta?.changes) {
+        // Partial reservation — release any already-reserved proofs before failing
+        if (i > 0) {
+          const releaseStmts = secrets.slice(0, i).map((secret) =>
+            this.db
+              .prepare(
+                'UPDATE coco_cashu_proofs SET usedByOperationId = NULL WHERE local_name = ? AND mintUrl = ? AND secret = ?',
+              )
+              .bind(this.db.localName, mintUrl, secret),
+          );
+          await this.db.batch(releaseStmts);
+        }
+        throw new Error(`Proof is not available for reservation: ${secrets[i]}`);
+      }
     }
   }
 
   async releaseProofs(mintUrl: string, secrets: string[]): Promise<void> {
     if (!secrets || secrets.length === 0) return;
-    const updateSql =
-      'UPDATE coco_cashu_proofs SET usedByOperationId = NULL WHERE local_name = ? AND mintUrl = ? AND secret = ?';
-    for (const secret of secrets) {
-      await this.db.run(updateSql, [this.db.localName, mintUrl, secret]);
-    }
+    const stmts = secrets.map((s) =>
+      this.db
+        .prepare('UPDATE coco_cashu_proofs SET usedByOperationId = NULL WHERE local_name = ? AND mintUrl = ? AND secret = ?')
+        .bind(this.db.localName, mintUrl, s),
+    );
+    await this.db.batch(stmts);
   }
 
   async setCreatedByOperation(
@@ -258,11 +277,12 @@ export class D1ProofRepository implements ProofRepository {
     operationId: string,
   ): Promise<void> {
     if (!secrets || secrets.length === 0) return;
-    const updateSql =
-      'UPDATE coco_cashu_proofs SET createdByOperationId = ? WHERE local_name = ? AND mintUrl = ? AND secret = ?';
-    for (const secret of secrets) {
-      await this.db.run(updateSql, [operationId, this.db.localName, mintUrl, secret]);
-    }
+    const stmts = secrets.map((s) =>
+      this.db
+        .prepare('UPDATE coco_cashu_proofs SET createdByOperationId = ? WHERE local_name = ? AND mintUrl = ? AND secret = ?')
+        .bind(operationId, this.db.localName, mintUrl, s),
+    );
+    await this.db.batch(stmts);
   }
 
   async getProofBySecret(mintUrl: string, secret: string): Promise<CoreProof | null> {

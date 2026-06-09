@@ -26,6 +26,23 @@ export class D1Db {
   async exec(sql: string): Promise<void> {
     await this.db.exec(sql);
   }
+
+  /**
+   * Create a prepared statement for use with batch() or direct execution.
+   * Returns D1's native D1PreparedStatement for bind() chaining.
+   */
+  prepare(sql: string): D1PreparedStatement {
+    return this.db.prepare(sql);
+  }
+
+  /**
+   * Execute multiple prepared statements atomically.
+   * D1 batch is a SQL transaction — all succeed or all roll back.
+   * Returns D1Result[] with meta.changes for each statement.
+   */
+  async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    return this.db.batch<T>(statements);
+  }
 }
 
 export function getUnixTimeSeconds(): number {

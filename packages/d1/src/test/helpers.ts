@@ -114,8 +114,20 @@ export function createD1Mock(): D1Database {
       return { results };
     },
 
-    async batch<T = unknown>(_statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-      throw new Error('D1 mock: batch() not implemented');
+    async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+      sqlite.exec('BEGIN');
+      try {
+        const results: D1Result<T>[] = [];
+        for (const stmt of statements) {
+          const result = await (stmt as { run(): Promise<D1Result<T>> }).run();
+          results.push(result);
+        }
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (e) {
+        sqlite.exec('ROLLBACK');
+        throw e;
+      }
     },
 
     async dump(): Promise<ArrayBuffer> {
