@@ -337,6 +337,16 @@ export class Manager {
     };
     this.eventBus.on('auth-session:updated', clearWalletCache);
     this.eventBus.on('auth-session:deleted', clearWalletCache);
+
+    // Invalidate wallet cache after any operation that mutates wallet state.
+    // Without this, the cached Wallet's internal counter/keychain is dirty
+    // from the previous operation, causing the next getWallet() to return
+    // stale state. On Cloudflare Workers this manifests as error 1101; on
+    // other platforms it causes subtle counter drift.
+    this.eventBus.on('send:finalized', clearWalletCache);
+    this.eventBus.on('mint-op:finalized', clearWalletCache);
+    this.eventBus.on('receive-op:finalized', clearWalletCache);
+    this.eventBus.on('melt-op:finalized', clearWalletCache);
   }
 
   on<E extends keyof CoreEvents>(
