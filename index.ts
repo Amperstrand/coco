@@ -100,3 +100,4 @@ export {
 export type { WebSocketLike, WebSocketFactory } from './infra/WsConnectionManager.ts';
 export { normalizeMintUrl, toAmount, sumAmounts, deserializeAmount, deserializeToken, serializeAmount, stringifyJson } from './utils.ts';
 export { normalizeMeltMethodData } from './operations/index.ts';
+export { proofAmount, sumProofAmounts, amountToNumber, coerceAmount } from './amount-helpers.ts';

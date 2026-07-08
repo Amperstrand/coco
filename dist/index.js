@@ -14294,4 +14294,46 @@ var MemoryRepositories = class {
 };
 
 //#endregion
-export { Amount, AuthApi, AuthSessionError, AuthSessionExpiredError, ConsoleLogger, DEFAULT_UNIT, HistoryApi, HttpResponseError, KeyRingApi, KeysetSyncError, Manager, MeltOpsApi, MeltQuoteApi, MemoryRepositories, MintApi, MintFetchError, MintOperationError, MintOpsApi, MintQuoteApi, NetworkError, OperationInProgressError, OpsApi, PaymentRequestError, PaymentRequestsApi, ProofOperationError, ProofValidationError, QuoteApi, QuoteIdentityConflictError, ReceiveOpsApi, SendOpsApi, SubscriptionApi, TokenValidationError, UnitMismatchError, UnitValidationError, UnknownMintError, WalletApi, WalletBalancesApi, assertSameUnit, assertUnitAmount, compareHistoryEntries, deserializeAmount, deserializeToken, getDecodedToken, getEncodedToken, getMintQuoteAmount, getMintQuoteAvailableAmount, getMintQuoteRemoteState, getTokenMetadata, initializeCoco, isLegacyHistoryEntry, isMintQuotePending, isOperationHistoryEntry, isStatefulMintQuote, isUnitAmountLikeObject, legacyHistoryId, meltQuoteFromBolt11Response, meltQuoteFromBolt12Response, meltQuoteFromOnchainResponse, meltQuoteToMethodSnapshot, mintQuoteFromBolt11Response, mintQuoteFromBolt12Response, mintQuoteFromOnchainResponse, mintQuoteToMethodSnapshot, normalizeMeltMethodData, normalizeMintUrl, normalizeUnit, normalizeUnitAmount, normalizeUnitList, operationHistoryId, parseHistoryEntryId, parseUnitAmount, projectLegacyHistoryRow, projectMeltOperation, projectMintOperation, projectOperationToHistoryEntry, projectReceiveOperation, projectSendOperation, resolveOnchainMeltFeeOption, sameUnitAmount, serializeAmount, stringifyJson, sumAmounts, toAmount };
+//#region amount-helpers.ts
+function coerceAmount(v) {
+	if (v == null) return 0;
+	if (typeof v === "number") return v;
+	if (typeof v === "bigint") return Number(v);
+	if (typeof v === "string") {
+		const trimmed = v.trim();
+		const n = trimmed.startsWith("0x") || trimmed.startsWith("-0x") ? parseInt(trimmed, 16) : Number(trimmed);
+		return Number.isFinite(n) ? n : 0;
+	}
+	if (typeof v === "object") {
+		const obj = v;
+		if (typeof obj.toNumber === "function") try {
+			const n = obj.toNumber.call(obj);
+			return Number.isFinite(n) ? n : 0;
+		} catch {}
+		if (typeof obj.valueOf === "function") try {
+			const n = Number(obj.valueOf.call(obj));
+			if (Number.isFinite(n)) return n;
+		} catch {}
+		if (typeof obj._hex === "string") {
+			const n = parseInt(obj._hex, 16);
+			return Number.isFinite(n) ? n : 0;
+		}
+	}
+	return 0;
+}
+function proofAmount(proof) {
+	if (proof == null) return 0;
+	const p = proof;
+	const n = coerceAmount(p.amount ?? p.a ?? p.value ?? p.v);
+	return n > 0 && Number.isFinite(n) ? Math.floor(n) : 0;
+}
+function sumProofAmounts(proofs) {
+	if (!Array.isArray(proofs)) return 0;
+	return proofs.reduce((sum, p) => sum + proofAmount(p), 0);
+}
+function amountToNumber(v) {
+	return coerceAmount(v);
+}
+
+//#endregion
+export { Amount, AuthApi, AuthSessionError, AuthSessionExpiredError, ConsoleLogger, DEFAULT_UNIT, HistoryApi, HttpResponseError, KeyRingApi, KeysetSyncError, Manager, MeltOpsApi, MeltQuoteApi, MemoryRepositories, MintApi, MintFetchError, MintOperationError, MintOpsApi, MintQuoteApi, NetworkError, OperationInProgressError, OpsApi, PaymentRequestError, PaymentRequestsApi, ProofOperationError, ProofValidationError, QuoteApi, QuoteIdentityConflictError, ReceiveOpsApi, SendOpsApi, SubscriptionApi, TokenValidationError, UnitMismatchError, UnitValidationError, UnknownMintError, WalletApi, WalletBalancesApi, amountToNumber, assertSameUnit, assertUnitAmount, coerceAmount, compareHistoryEntries, deserializeAmount, deserializeToken, getDecodedToken, getEncodedToken, getMintQuoteAmount, getMintQuoteAvailableAmount, getMintQuoteRemoteState, getTokenMetadata, initializeCoco, isLegacyHistoryEntry, isMintQuotePending, isOperationHistoryEntry, isStatefulMintQuote, isUnitAmountLikeObject, legacyHistoryId, meltQuoteFromBolt11Response, meltQuoteFromBolt12Response, meltQuoteFromOnchainResponse, meltQuoteToMethodSnapshot, mintQuoteFromBolt11Response, mintQuoteFromBolt12Response, mintQuoteFromOnchainResponse, mintQuoteToMethodSnapshot, normalizeMeltMethodData, normalizeMintUrl, normalizeUnit, normalizeUnitAmount, normalizeUnitList, operationHistoryId, parseHistoryEntryId, parseUnitAmount, projectLegacyHistoryRow, projectMeltOperation, projectMintOperation, projectOperationToHistoryEntry, projectReceiveOperation, projectSendOperation, proofAmount, resolveOnchainMeltFeeOption, sameUnitAmount, serializeAmount, stringifyJson, sumAmounts, sumProofAmounts, toAmount };
