@@ -138,6 +138,20 @@ var AuthSessionExpiredError = class extends AuthSessionError {
 		this.name = `AuthSessionExpiredError`;
 	}
 };
+var QuoteIdentityConflictError = class extends Error {
+	kind;
+	mintUrl;
+	quoteId;
+	methods;
+	constructor(kind, mintUrl, quoteId, methods, message) {
+		super(message ?? `${kind} quote identity conflict for quote ${quoteId} at ${mintUrl}: methods ${methods.join(", ")}`);
+		this.name = "QuoteIdentityConflictError";
+		this.kind = kind;
+		this.mintUrl = mintUrl;
+		this.quoteId = quoteId;
+		this.methods = [...methods];
+	}
+};
 
 //#endregion
 //#region amounts.ts
@@ -856,12 +870,11 @@ function meltQuoteToMethodSnapshot(quote) {
 function resolveOnchainMeltFeeOption(quote, feeIndex) {
 	const feeOptions = quote.fee_options;
 	if (feeOptions.length === 0) throw new Error(`Melt quote ${quote.quoteId} has no onchain fee options`);
-	const resolvedFeeIndex = feeIndex ?? (feeOptions.length === 1 ? feeOptions[0].fee_index : void 0);
-	if (resolvedFeeIndex === void 0) throw new Error(`Melt quote ${quote.quoteId} requires an explicit feeIndex`);
-	const feeOption = feeOptions.find((option) => option.fee_index === resolvedFeeIndex);
-	if (!feeOption) throw new Error(`Melt quote ${quote.quoteId} does not include onchain fee option ${resolvedFeeIndex}`);
+	if (feeIndex === void 0) throw new Error(`Melt quote ${quote.quoteId} requires an explicit feeIndex`);
+	const feeOption = feeOptions.find((option) => option.fee_index === feeIndex);
+	if (!feeOption) throw new Error(`Melt quote ${quote.quoteId} does not include onchain fee option ${feeIndex}`);
 	return {
-		feeIndex: resolvedFeeIndex,
+		feeIndex,
 		feeOption
 	};
 }
@@ -1556,19 +1569,36 @@ var MintService = class {
 		const { mint } = await this.ensureUpdatedMint(normalizeMintUrl(mintUrl));
 		return mint.mintInfo;
 	}
+	async checkPaymentMethodCapability(input) {
+		const operation = this.assertPaymentMethodCapabilityOperation(input.operation);
+		const nut = this.nutForPaymentMethodCapabilityOperation(operation);
+		return {
+			...await this.getMintMethodUnitCapability(input.mintUrl, nut, input.method, input.unit),
+			operation
+		};
+	}
 	async getMintMethodUnitCapability(mintUrl, nut, method, unit) {
 		this.assertMethodCapabilityNut(nut);
 		const normalizedMintUrl = normalizeMintUrl(mintUrl);
 		const normalizedUnit = normalizeUnit(unit, { defaultUnit: DEFAULT_UNIT });
 		const mintInfo = await this.getMintInfo(normalizedMintUrl);
 		const settings = this.getNutMethodSettings(mintInfo, nut);
-		if (!settings || !settings.methods || !Array.isArray(settings.methods) || settings.disabled === true) return {
+		const nutName = this.formatNut(nut);
+		if (settings?.disabled === true) return {
 			supported: false,
 			disabled: true,
 			nut,
 			method,
 			unit: normalizedUnit,
-			reason: `NUT-${nut} is disabled`
+			reason: `${nutName} is disabled`
+		};
+		if (!settings || !Array.isArray(settings.methods)) return {
+			supported: false,
+			disabled: false,
+			nut,
+			method,
+			unit: normalizedUnit,
+			reason: `${nutName} method metadata is missing`
 		};
 		const matchingMethod = settings.methods.find((entry) => {
 			try {
@@ -1583,7 +1613,7 @@ var MintService = class {
 			nut,
 			method,
 			unit: normalizedUnit,
-			reason: `NUT-${nut} method ${method} does not support unit ${normalizedUnit}`
+			reason: `${nutName} method ${method} does not support unit ${normalizedUnit}`
 		};
 		return {
 			supported: true,
@@ -1596,6 +1626,36 @@ var MintService = class {
 			options: matchingMethod.options
 		};
 	}
+	async listPaymentMethodCapabilities(input) {
+		const operations = input.operation === void 0 ? ["mint", "melt"] : [this.assertPaymentMethodCapabilityOperation(input.operation)];
+		const unitFilter = input.unit === void 0 ? void 0 : normalizeUnit(input.unit);
+		const mintInfo = await this.getMintInfo(input.mintUrl);
+		const capabilities = [];
+		for (const operation of operations) {
+			const nut = this.nutForPaymentMethodCapabilityOperation(operation);
+			const settings = this.getNutMethodSettings(mintInfo, nut);
+			if (!settings || settings.disabled === true || !Array.isArray(settings.methods)) continue;
+			for (const entry of settings.methods) {
+				let unit;
+				try {
+					unit = normalizeUnit(entry.unit);
+				} catch {
+					continue;
+				}
+				if (unitFilter !== void 0 && unit !== unitFilter) continue;
+				capabilities.push({
+					operation,
+					nut,
+					method: entry.method,
+					unit,
+					minAmount: this.parseOptionalAmount(entry.min_amount),
+					maxAmount: this.parseOptionalAmount(entry.max_amount),
+					options: entry.options
+				});
+			}
+		}
+		return capabilities;
+	}
 	async assertMethodUnitSupported(mintUrl, nut, method, scope) {
 		let unit;
 		let requestedAmount;
@@ -1606,10 +1666,11 @@ var MintService = class {
 			requestedAmount = intent.amount;
 		}
 		const capability = await this.getMintMethodUnitCapability(mintUrl, nut, method, unit);
-		if (!capability.supported) throw new ProofValidationError(capability.reason ?? `NUT-${nut} method ${method} does not support unit ${capability.unit}`);
+		if (!capability.supported) throw new ProofValidationError(capability.reason ?? `${this.formatNut(nut)} method ${method} does not support unit ${capability.unit}`);
 		if (requestedAmount === void 0) return;
-		if (capability.minAmount && requestedAmount.lessThan(capability.minAmount)) throw new ProofValidationError(`NUT-${nut} method ${method} unit ${capability.unit} requires amount >= ${capability.minAmount}`);
-		if (capability.maxAmount && requestedAmount.greaterThan(capability.maxAmount)) throw new ProofValidationError(`NUT-${nut} method ${method} unit ${capability.unit} requires amount <= ${capability.maxAmount}`);
+		const amountRequirement = `${this.formatNut(nut)} method ${method} unit ${capability.unit}`;
+		if (capability.minAmount && requestedAmount.lessThan(capability.minAmount)) throw new ProofValidationError(`${amountRequirement} requires amount >= ${capability.minAmount}`);
+		if (capability.maxAmount && requestedAmount.greaterThan(capability.maxAmount)) throw new ProofValidationError(`${amountRequirement} requires amount <= ${capability.maxAmount}`);
 	}
 	async getAllMints() {
 		return await this.mintRepo.getAllMints();
@@ -1636,6 +1697,16 @@ var MintService = class {
 	}
 	assertMethodCapabilityNut(nut) {
 		if (nut !== 4 && nut !== 5) throw new ProofValidationError(`NUT-${nut} does not define method-unit capabilities; use NUT-04 or NUT-05 method metadata`);
+	}
+	formatNut(nut) {
+		return `NUT-0${nut}`;
+	}
+	assertPaymentMethodCapabilityOperation(operation) {
+		if (operation !== "mint" && operation !== "melt") throw new ProofValidationError(`Invalid payment method capability operation ${operation}; use mint or melt`);
+		return operation;
+	}
+	nutForPaymentMethodCapabilityOperation(operation) {
+		return operation === "mint" ? 4 : 5;
 	}
 	parseOptionalAmount(amount) {
 		return amount === void 0 || amount === null ? null : Amount$1.from(amount);
@@ -3307,116 +3378,6 @@ var ProofService = class {
 			count: secrets.length
 		});
 	}
-	/**
-	* Reclaim proofs that are still unspent on the mint.
-	* Checks proof states via mint API, then swaps unspent ones back to new proofs.
-	* This is the CDK-inspired recovery primitive for deterministic crash recovery.
-	*
-	* Returns the number of proofs successfully reclaimed.
-	*/
-	async reclaimUnspent(mintUrl, secrets, unit) {
-		if (!mintUrl || mintUrl.trim().length === 0) throw new ProofValidationError("mintUrl is required");
-		if (!secrets || secrets.length === 0) return {
-			reclaimed: 0,
-			spent: 0,
-			unreachable: false
-		};
-		const normalizedUnit = normalizeUnit(unit, { defaultUnit: DEFAULT_UNIT });
-		let wallet;
-		try {
-			wallet = await this.walletService.getWalletWithActiveKeysetId(mintUrl, normalizedUnit);
-		} catch {
-			this.logger?.warn("Could not reach mint for reclaimUnspent", { mintUrl });
-			return {
-				reclaimed: 0,
-				spent: 0,
-				unreachable: true
-			};
-		}
-		let proofStates;
-		try {
-			proofStates = await wallet.wallet.checkProofsStates(secrets.map((s) => ({ secret: s })));
-		} catch {
-			this.logger?.warn("Could not check proof states for reclaimUnspent", { mintUrl });
-			return {
-				reclaimed: 0,
-				spent: 0,
-				unreachable: true
-			};
-		}
-		const unspentSecrets = [];
-		let spentCount = 0;
-		for (let i = 0; i < proofStates.length; i++) if (proofStates[i]?.state === "SPENT") spentCount++;
-		else if (proofStates[i]?.state === "UNSPENT") unspentSecrets.push(secrets[i]);
-		if (unspentSecrets.length === 0) {
-			this.logger?.debug("No unspent proofs to reclaim", {
-				mintUrl,
-				spentCount
-			});
-			return {
-				reclaimed: 0,
-				spent: spentCount,
-				unreachable: false
-			};
-		}
-		const unspentProofs = await this.proofRepository.getProofsBySecrets(mintUrl, unspentSecrets);
-		const totalAmount = sumProofs(unspentProofs);
-		if (totalAmount.isZero()) {
-			this.logger?.debug("Unspent proofs have zero total amount", {
-				mintUrl,
-				count: unspentSecrets.length
-			});
-			return {
-				reclaimed: 0,
-				spent: spentCount,
-				unreachable: false
-			};
-		}
-		const { send: newSendOutputs } = await this.createOutputsAndIncrementCounters(mintUrl, {
-			keep: {
-				amount: Amount$1.zero(),
-				unit: normalizedUnit
-			},
-			send: {
-				amount: totalAmount,
-				unit: normalizedUnit
-			}
-		});
-		const outputConfig = {
-			send: {
-				type: "custom",
-				data: newSendOutputs
-			},
-			keep: {
-				type: "custom",
-				data: []
-			}
-		};
-		try {
-			const newCoreProofs = mapProofToCoreProof(mintUrl, "ready", (await wallet.wallet.send(totalAmount, unspentProofs, void 0, outputConfig)).send, { unit: normalizedUnit });
-			await this.saveProofs(mintUrl, newCoreProofs);
-			await this.deleteProofs(mintUrl, unspentSecrets);
-			this.logger?.info("Reclaimed unspent proofs", {
-				mintUrl,
-				unit: normalizedUnit,
-				reclaimedCount: unspentSecrets.length,
-				spentCount,
-				totalAmount: totalAmount.toString()
-			});
-			return {
-				reclaimed: unspentSecrets.length,
-				spent: spentCount,
-				unreachable: false
-			};
-		} catch (swapError) {
-			this.logger?.warn("Swap failed during reclaimUnspent, restoring proofs to ready", {
-				mintUrl,
-				error: swapError instanceof Error ? swapError.message : String(swapError)
-			});
-			await this.restoreProofsToReady(mintUrl, unspentSecrets);
-			throw swapError;
-		}
-	}
 	async deleteProofs(mintUrl, secrets) {
 		if (!mintUrl || mintUrl.trim().length === 0) throw new ProofValidationError("mintUrl is required");
 		if (!secrets || secrets.length === 0) return;
@@ -4696,37 +4657,16 @@ var MintOperationProcessor = class {
 
 //#endregion
 //#region operations/send/SendOperation.ts
-function isInitOperation(op) {
-	return op.state === "init";
-}
-function isPreparedOperation(op) {
-	return op.state === "prepared";
-}
-function isExecutingOperation(op) {
-	return op.state === "executing";
-}
-function isPendingOperation(op) {
-	return op.state === "pending";
-}
-function isFinalizedOperation(op) {
-	return op.state === "finalized";
-}
-function isRollingBackOperation(op) {
-	return op.state === "rolling_back";
-}
-function isRolledBackOperation(op) {
-	return op.state === "rolled_back";
-}
 /**
 * Check if operation has PreparedData (any state after init)
 */
-function hasPreparedData(op) {
+function hasPreparedData$1(op) {
 	return op.state !== "init";
 }
 /**
 * Check if operation is in a terminal state
 */
-function isTerminalOperation(op) {
+function isTerminalOperation$1(op) {
 	return op.state === "finalized" || op.state === "rolled_back";
 }
 /**
@@ -4745,7 +4685,7 @@ function getSendProofSecrets(op) {
 * - If needsSwap: secrets come from outputData.keep
 * - If !needsSwap: empty (no change proofs)
 */
-function getKeepProofSecrets(op) {
+function getKeepProofSecrets$1(op) {
 	if (!op.needsSwap) return [];
 	if (!op.outputData) return [];
 	const { keepSecrets } = getSecretsFromSerializedOutputData(op.outputData);
@@ -4824,26 +4764,32 @@ var ProofStateWatcherService = class {
 						err
 					});
 				}
-				else if (state === "spent") for (const secret of secrets) {
-					const key = toKey(mintUrl, secret);
-					try {
-						await this.stopWatching(key);
-					} catch (err) {
-						this.logger?.warn("Failed to stop watcher on spent proof", {
-							mintUrl,
-							secret,
-							err
-						});
+				else if (state === "spent") {
+					const operationIds = /* @__PURE__ */ new Set();
+					for (const secret of secrets) {
+						const key = toKey(mintUrl, secret);
+						try {
+							await this.stopWatching(key);
+						} catch (err) {
+							this.logger?.warn("Failed to stop watcher on spent proof", {
+								mintUrl,
+								secret,
+								err
+							});
+						}
+						if (!this.sendOperationService) continue;
+						try {
+							const operationId = await this.getSendOperationIdForSpentProof(mintUrl, secret);
+							if (operationId) operationIds.add(operationId);
+						} catch (err) {
+							this.logger?.warn("Failed to resolve send operation from spent proof event", {
+								mintUrl,
+								secret,
+								err
+							});
+						}
 					}
-					try {
-						await this.tryFinalizeSendOperation(mintUrl, secret);
-					} catch (err) {
-						this.logger?.warn("Failed to finalize send operation from spent proof event", {
-							mintUrl,
-							secret,
-							err
-						});
-					}
+					for (const operationId of operationIds) await this.tryFinalizeSendOperation(mintUrl, operationId);
 				}
 			} catch (err) {
 				this.logger?.error("Error handling proofs:state-changed", { err });
@@ -4936,7 +4882,6 @@ var ProofStateWatcherService = class {
 					subId
 				});
 				await this.stopWatching(key);
-				await this.tryFinalizeSendOperation(mintUrl, secret);
 			} catch (err) {
 				this.logger?.error("Failed to mark inflight proof as spent", {
 					mintUrl,
@@ -5028,17 +4973,21 @@ var ProofStateWatcherService = class {
 		});
 	}
 	/**
-	* Check if a spent proof is part of a send operation and finalize it if all send proofs are spent.
+	* Resolve the send operation associated with a spent proof, if any.
 	*/
-	async tryFinalizeSendOperation(mintUrl, secret) {
+	async getSendOperationIdForSpentProof(mintUrl, secret) {
+		const spentProof = await this.proofRepository.getProofBySecret(mintUrl, secret);
+		return spentProof?.usedByOperationId || spentProof?.createdByOperationId;
+	}
+	/**
+	* Check if all send proofs for an operation are spent and finalize it if so.
+	*/
+	async tryFinalizeSendOperation(mintUrl, operationId) {
 		if (!this.sendOperationService) return;
 		try {
-			const spentProof = await this.proofRepository.getProofBySecret(mintUrl, secret);
-			const operationId = spentProof?.usedByOperationId || spentProof?.createdByOperationId;
-			if (!operationId) return;
 			const operation = await this.sendOperationService.getOperation(operationId);
 			if (!operation || operation.state !== "pending") return;
-			if (!hasPreparedData(operation)) return;
+			if (!hasPreparedData$1(operation)) return;
 			const sendProofSecrets = getSendProofSecrets(operation);
 			if (sendProofSecrets.length === 0) return;
 			const sendProofs = await this.proofRepository.getProofsBySecrets(mintUrl, sendProofSecrets);
@@ -5050,7 +4999,7 @@ var ProofStateWatcherService = class {
 		} catch (err) {
 			this.logger?.error("Failed to check/finalize send operation", {
 				mintUrl,
-				secret,
+				operationId,
 				err
 			});
 		}
@@ -5375,6 +5324,8 @@ var SendOperationService = class {
 	/**
 	* Execute the prepared operation.
 	* Performs the swap (if needed) and creates the token.
+	* If a memo is provided, trims it and persists it on the token before saving the
+	* pending operation. Whitespace-only memos are omitted.
 	*
 	* If execution fails after transitioning to 'executing' state,
 	* automatically attempts to recover the operation.
@@ -5382,7 +5333,7 @@ var SendOperationService = class {
 	*
 	* Delegates to the appropriate handler based on the operation method.
 	*/
-	async execute(operation) {
+	async execute(operation, options) {
 		if (!this.handlerProvider) throw new Error("SendHandlerProvider is required");
 		const releaseLock = await this.acquireOperationLock(operation.id);
 		try {
@@ -5392,9 +5343,9 @@ var SendOperationService = class {
 				updatedAt: Date.now()
 			};
 			await this.sendOperationRepository.update(executing);
-			let pending = null;
-			let token = null;
-			let failed = null;
+			let pending;
+			let token;
+			let failed;
 			try {
 				const handler = this.handlerProvider.get(operation.method);
 				if (!handler) throw new Error(`No handler registered for method: ${operation.method}`);
@@ -5412,9 +5363,14 @@ var SendOperationService = class {
 				};
 				const result = await handler.execute(ctx);
 				if (result.status === "PENDING") {
-					await this.sendOperationRepository.update(result.pending);
-					pending = result.pending;
-					token = result.token ?? null;
+					const resolvedToken = options?.memo ? this.applyTokenMemo(result.token, options.memo) : result.token;
+					const pendingWithMemo = {
+						...result.pending,
+						token: resolvedToken
+					};
+					await this.sendOperationRepository.update(pendingWithMemo);
+					pending = pendingWithMemo;
+					token = resolvedToken;
 				} else {
 					await this.sendOperationRepository.update(result.failed);
 					await this.eventBus.emit("send:rolled-back", {
@@ -5542,7 +5498,7 @@ var SendOperationService = class {
 			const operation = await this.sendOperationRepository.getById(operationId);
 			if (!operation) throw new Error(`Operation ${operationId} not found`);
 			if (operation.state === "finalized" || operation.state === "rolled_back" || operation.state === "rolling_back" || operation.state === "init" || operation.state === "executing") throw new Error(`Cannot rollback operation in state ${operation.state}`);
-			if (!hasPreparedData(operation)) throw new Error(`Operation ${operationId} is not in a rollbackable state`);
+			if (!hasPreparedData$1(operation)) throw new Error(`Operation ${operationId} is not in a rollbackable state`);
 			const handler = this.handlerProvider.get(operation.method);
 			if (!handler.rollback) throw new Error(`Send operations of method ${operation.method} can not be rolled back`);
 			if (operation.state === "pending" && operation.method === "p2pk") throw new Error("Cannot rollback pending P2PK send operation");
@@ -5754,17 +5710,7 @@ var SendOperationService = class {
 			});
 			throw new Error("Mint unreachable during rolling_back recovery");
 		}
-		if ((await this.proofService.reclaimUnspent(op.mintUrl, sendSecrets, op.unit)).unreachable) {
-			this.logger?.warn("Could not reach mint for rolling_back recovery, will retry later", {
-				operationId: op.id,
-				mintUrl: op.mintUrl
-			});
-			throw new Error("Mint unreachable during rolling_back recovery");
-		}
-		await this.proofService.releaseProofs(op.mintUrl, op.inputProofSecrets);
-		const keepSecrets = getKeepProofSecrets(op);
-		if (keepSecrets.length > 0) await this.proofService.releaseProofs(op.mintUrl, keepSecrets);
-		await this.markAsRolledBack(op, "Recovered: proofs reclaimed after crash");
+		await this.retryRollback(op, handler, wallet);
 	}
 	async retryRollback(op, handler, wallet) {
 		await handler.rollback({
@@ -5853,7 +5799,7 @@ var SendOperationService = class {
 		for (const proof of reservedProofs) {
 			if (!proof.usedByOperationId) continue;
 			const operation = await this.sendOperationRepository.getById(proof.usedByOperationId);
-			if (!operation || isTerminalOperation(operation)) orphanedProofs.push(proof);
+			if (!operation || isTerminalOperation$1(operation)) orphanedProofs.push(proof);
 		}
 		const byMint = /* @__PURE__ */ new Map();
 		for (const proof of orphanedProofs) {
@@ -5864,6 +5810,17 @@ var SendOperationService = class {
 		for (const [mintUrl, secrets] of byMint) await this.proofService.releaseProofs(mintUrl, secrets);
 		if (orphanedProofs.length > 0) this.logger?.info("Released orphaned proof reservations", { count: orphanedProofs.length });
 		return orphanedProofs.length;
+	}
+	normalizeMemo(memo) {
+		const trimmed = memo.trim();
+		return trimmed.length > 0 ? trimmed : void 0;
+	}
+	applyTokenMemo(token, memo) {
+		const normalized = this.normalizeMemo(memo);
+		return normalized ? {
+			...token,
+			memo: normalized
+		} : token;
 	}
 	/**
 	* Get an operation by ID.
@@ -5890,7 +5847,7 @@ var SendOperationService = class {
 /**
 * Check if operation has PreparedData (any state after init)
 */
-function hasPreparedData$1(op) {
+function hasPreparedData(op) {
 	return op.state !== "init";
 }
 /**
@@ -6019,10 +5976,10 @@ var MeltOperationService = class {
 		if (matching.length === 0) return null;
 		return matching.sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
 	}
-	async prepareExistingQuote(mintUrl, method, quoteId, options = {}) {
-		const quote = await this.quoteLifecycle.requireMeltQuoteForPrepare(mintUrl, method, quoteId, options.expectedUnit);
+	async prepareExistingQuote(quoteRef, options = {}) {
+		const quote = await this.quoteLifecycle.requireMeltQuoteRefForPrepare(quoteRef);
 		const methodData = this.methodDataFromMeltQuote(quote, options);
-		const initOperation = await this.init(quote.mintUrl, method, methodData, quote.unit, { quoteId: quote.quoteId });
+		const initOperation = await this.init(quote.mintUrl, quote.method, methodData, quote.unit, { quoteId: quote.quoteId });
 		return this.prepare(initOperation.id);
 	}
 	methodDataFromMeltQuote(quote, options = {}) {
@@ -6227,7 +6184,7 @@ var MeltOperationService = class {
 			const operation = await this.meltOperationRepository.getById(operationId);
 			if (!operation) throw new Error(`Operation ${operationId} not found`);
 			if (operation.state === "finalized" || operation.state === "rolled_back" || operation.state === "rolling_back" || operation.state === "init" || operation.state === "executing") throw new Error(`Cannot rollback operation in state ${operation.state}`);
-			if (!hasPreparedData$1(operation)) throw new Error(`Operation ${operationId} is not in a rollbackable state`);
+			if (!hasPreparedData(operation)) throw new Error(`Operation ${operationId} is not in a rollbackable state`);
 			const handler = this.handlerProvider.get(operation.method);
 			const { wallet } = await this.walletService.getWalletWithActiveKeysetId(operation.mintUrl, operation.unit);
 			if (operation.state === "pending") {
@@ -6491,10 +6448,18 @@ var MeltOperationService = class {
 		return this.meltOperationRepository.getById(operationId);
 	}
 	async getOperationByQuote(mintUrl, method, quoteId) {
-		const matching = (await this.meltOperationRepository.getByQuoteId(mintUrl, quoteId)).filter((operation) => operation.method === method && hasPreparedData$1(operation));
+		const matching = (await this.meltOperationRepository.getByQuoteId(mintUrl, quoteId)).filter((operation) => operation.method === method && hasPreparedData(operation));
 		if (matching.length === 0) return null;
 		if (matching.length > 1) throw new Error(`Found ${matching.length} melt operations for mint ${mintUrl}, method ${method}, and quote ${quoteId}`);
 		return matching[0];
+	}
+	async getOperationByQuoteIdentity(identity) {
+		const quote = await this.quoteLifecycle.getMeltQuoteById(identity);
+		if (!quote) return null;
+		const operations = await this.meltOperationRepository.getByQuoteId(normalizeMintUrl(quote.mintUrl), quote.quoteId);
+		if (operations.length === 0) return null;
+		if (operations.length > 1) throw new Error(`Found ${operations.length} melt operations for mint ${quote.mintUrl} and quote ${quote.quoteId}`);
+		return operations[0];
 	}
 	async listOperationsByQuote(mintUrl, quoteId) {
 		return (await this.meltOperationRepository.getByQuoteId(normalizeMintUrl(mintUrl), quoteId)).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
@@ -6512,7 +6477,7 @@ var MeltOperationService = class {
 function hasPendingData(op) {
 	return op.state !== "init";
 }
-function isTerminalOperation$1(op) {
+function isTerminalOperation(op) {
 	return op.state === "finalized" || op.state === "failed";
 }
 function getOutputProofSecrets$1(op) {
@@ -6638,16 +6603,16 @@ var MintOperationService = class {
 		}
 		return quote;
 	}
-	async prepare(mintUrl, method, quoteId, methodData = {}, expectedUnit, explicitAmount) {
-		const quote = await this.quoteLifecycle.requireMintQuoteForPrepare(mintUrl, method, quoteId, expectedUnit);
-		const amount = getMintQuoteAmount(quote) ?? explicitAmount?.amount;
-		if (!amount) throw new Error(`Mint quote ${quoteId} for ${method} at ${mintUrl} does not have a fixed amount; pass an explicit amount for reusable quote preparation`);
-		if (explicitAmount && explicitAmount.unit !== quote.unit) throw new ProofValidationError(`Mint quote ${quoteId} unit ${quote.unit} does not match requested unit ${explicitAmount.unit}`);
-		await this.handlerProvider.get(method).validateQuoteForPrepare?.(quote);
+	async prepare(quoteRef, requestedAmount) {
+		const quote = await this.quoteLifecycle.requireMintQuoteRefForPrepare(quoteRef);
+		const amount = Amount$1.from(requestedAmount);
+		const fixedAmount = getMintQuoteAmount(quote);
+		if (fixedAmount && !fixedAmount.equals(amount)) throw new Error(`Mint quote ${quote.quoteId} amount ${fixedAmount} does not match requested amount ${amount}`);
+		await this.handlerProvider.get(quote.method).validateQuoteForPrepare?.(quote);
 		const initOperation = await this.createInitOperation(quote.mintUrl, {
 			amount,
 			unit: quote.unit
-		}, method, methodData, { quoteId: quote.quoteId });
+		}, quote.method, {}, { quoteId: quote.quoteId });
 		return this.prepareInitOperation(initOperation.id);
 	}
 	async prepareInitOperation(operationId, options) {
@@ -6755,7 +6720,7 @@ var MintOperationService = class {
 			} catch (e) {
 				await this.tryRecoverExecutingOperation(executing);
 				const current = await this.mintOperationRepository.getById(operationId);
-				if (current && isTerminalOperation$1(current)) return current;
+				if (current && isTerminalOperation(current)) return current;
 				throw e;
 			}
 		} finally {
@@ -6765,7 +6730,7 @@ var MintOperationService = class {
 	async finalize(operationId) {
 		const operation = await this.mintOperationRepository.getById(operationId);
 		if (!operation) throw new Error(`Operation ${operationId} not found`);
-		if (isTerminalOperation$1(operation)) {
+		if (isTerminalOperation(operation)) {
 			this.logger?.debug("Operation already finalized", { operationId });
 			return operation;
 		}
@@ -6773,7 +6738,7 @@ var MintOperationService = class {
 		if (operation.state === "executing") {
 			await this.recoverExecutingOperation(operation);
 			const updated = await this.mintOperationRepository.getById(operationId);
-			if (updated && isTerminalOperation$1(updated)) return updated;
+			if (updated && isTerminalOperation(updated)) return updated;
 			if (updated?.state === "pending") throw new Error(`Operation ${operationId} remains pending after recovery`);
 			throw new Error(`Unable to finalize operation ${operationId} in state '${updated?.state ?? "missing"}'`);
 		}
@@ -6850,7 +6815,7 @@ var MintOperationService = class {
 				this.logger?.warn("Mint operation missing during recovery", { operationId: op.id });
 				return;
 			}
-			if (isTerminalOperation$1(current)) return;
+			if (isTerminalOperation(current)) return;
 			if (current.state !== "executing") {
 				this.logger?.debug("Mint operation not executing during recovery", {
 					operationId: current.id,
@@ -6919,7 +6884,7 @@ var MintOperationService = class {
 		});
 		const finalized = sorted.find((op) => op.state === "finalized");
 		if (finalized) return finalized;
-		const terminal = sorted.find((op) => isTerminalOperation$1(op));
+		const terminal = sorted.find((op) => isTerminalOperation(op));
 		if (terminal) return terminal;
 		return sorted[0] ?? null;
 	}
@@ -7653,6 +7618,10 @@ var ReceiveOperationService = class {
 				});
 				if (await this.hasSavedOutputs(executing)) {
 					await this.markAsFinalized(executing);
+					return;
+				}
+				if (recovered.length === 0) {
+					await this.markAsRolledBack(executing, "Recovered: input proofs spent without recoverable outputs");
 					return;
 				}
 				this.logger?.warn("Receive outputs not persisted after recovery attempt", {
@@ -9240,6 +9209,12 @@ var SubscriptionManager = class {
 		this.subscriptions.clear();
 		this.activeByMint.clear();
 		this.pendingSubscribeByMint.clear();
+		const injectedTransport = this.transportByMint.get("*");
+		this.transportByMint.clear();
+		if (injectedTransport) this.transportByMint.set("*", injectedTransport);
+		this.nextIdByMint.clear();
+		this.messageHandlerByMint.clear();
+		this.openHandlerByMint.clear();
 		this.hasOpenedByMint.clear();
 	}
 	closeMint(mintUrl) {
@@ -10262,7 +10237,7 @@ var DefaultSendHandler = class {
 	async finalize(ctx) {
 		const { operation, proofService } = ctx;
 		const sendSecrets = getSendProofSecrets(operation);
-		const keepSecrets = getKeepProofSecrets(operation);
+		const keepSecrets = getKeepProofSecrets$1(operation);
 		await proofService.releaseProofs(operation.mintUrl, operation.inputProofSecrets);
 		if (sendSecrets.length > 0) await proofService.releaseProofs(operation.mintUrl, sendSecrets);
 		if (keepSecrets.length > 0) await proofService.releaseProofs(operation.mintUrl, keepSecrets);
@@ -10321,7 +10296,7 @@ var DefaultSendHandler = class {
 				}
 			}
 			await proofService.releaseProofs(mintUrl, inputProofSecrets);
-			const keepSecrets = getKeepProofSecrets(operation);
+			const keepSecrets = getKeepProofSecrets$1(operation);
 			if (keepSecrets.length > 0) await proofService.releaseProofs(mintUrl, keepSecrets);
 		}
 	}
@@ -10538,7 +10513,7 @@ var P2pkSendHandler = class {
 	async finalize(ctx) {
 		const { operation, proofService } = ctx;
 		const sendSecrets = getSendProofSecrets(operation);
-		const keepSecrets = getKeepProofSecrets(operation);
+		const keepSecrets = getKeepProofSecrets$1(operation);
 		await proofService.releaseProofs(operation.mintUrl, operation.inputProofSecrets);
 		if (sendSecrets.length > 0) await proofService.releaseProofs(operation.mintUrl, sendSecrets);
 		if (keepSecrets.length > 0) await proofService.releaseProofs(operation.mintUrl, keepSecrets);
@@ -11592,6 +11567,14 @@ var MintApi = class {
 	async getMintInfo(mintUrl) {
 		return this.mintService.getMintInfo(mintUrl);
 	}
+	/** Check whether a mint supports one method/unit pair for minting or melting. */
+	async checkPaymentMethodCapability(input) {
+		return this.mintService.checkPaymentMethodCapability(input);
+	}
+	/** List enabled Payment Method Capabilities advertised by NUT-04/NUT-05 mint metadata. */
+	async listPaymentMethodCapabilities(input) {
+		return this.mintService.listPaymentMethodCapabilities(input);
+	}
 	async isTrustedMint(mintUrl) {
 		return this.mintService.isTrustedMint(mintUrl);
 	}
@@ -11790,12 +11773,13 @@ var SendOpsApi = class {
 	* Executes a prepared send operation and returns the shareable token.
 	*
 	* Accepts either a prepared operation object or its ID. The latest operation
-	* state is always reloaded before execution.
+	* state is always reloaded before execution. When provided, `options.memo`
+	* is trimmed and persisted on the returned token; whitespace-only memos are omitted.
 	*/
-	async execute(operationOrId) {
+	async execute(operationOrId, options) {
 		const operation = await this.resolveOperation(operationOrId);
 		if (operation.state !== "prepared") throw new Error(`Cannot execute operation in state '${operation.state}'. Expected 'prepared'.`);
-		return this.sendOperationService.execute(operation);
+		return this.sendOperationService.execute(operation, options);
 	}
 	/** Returns a send operation by ID, or `null` when it does not exist. */
 	async get(operationId) {
@@ -11986,10 +11970,7 @@ var MeltOpsApi = class {
 	* before committing to the external payment.
 	*/
 	async prepare(input) {
-		return this.meltOperationService.prepareExistingQuote(input.mintUrl, input.method, input.quoteId, {
-			expectedUnit: input.unit,
-			feeIndex: input.method === "onchain" ? input.feeIndex : void 0
-		});
+		return this.meltOperationService.prepareExistingQuote(input.quote, { feeIndex: input.feeIndex });
 	}
 	/**
 	* Executes a prepared melt operation.
@@ -12006,13 +11987,13 @@ var MeltOpsApi = class {
 	async get(operationId) {
 		return this.meltOperationService.getOperation(operationId);
 	}
-	/** Returns a melt operation by mint URL, method, and quote ID, or `null` if not found. */
+	/** Returns the tracked melt operation for a canonical quote identity, or `null`. */
 	async getByQuote(input) {
-		return this.meltOperationService.getOperationByQuote(input.mintUrl, input.method, input.quoteId);
+		return this.meltOperationService.getOperationByQuoteIdentity(input);
 	}
 	/** Lists melt operations for a mint URL and quote ID. */
-	async listByQuote(mintUrl, quoteId) {
-		return this.meltOperationService.listOperationsByQuote(mintUrl, quoteId);
+	async listByQuote(input) {
+		return this.meltOperationService.listOperationsByQuote(input.mintUrl, input.quoteId);
 	}
 	/** Lists melt operations that are prepared and ready to execute or cancel. */
 	async listPrepared() {
@@ -12104,9 +12085,7 @@ var MintOpsApi = class {
 	* Prepares a mint operation against an existing canonical quote without executing it.
 	*/
 	async prepare(input) {
-		const methodData = ("methodData" in input ? input.methodData : void 0) ?? {};
-		const explicitAmount = "amount" in input && input.amount !== void 0 ? parseUnitAmount(input.amount, { explicitUnit: input.unit }) : void 0;
-		return this.mintOperationService.prepare(input.mintUrl, input.method, input.quoteId, methodData, input.unit, explicitAmount);
+		return this.mintOperationService.prepare(input.quote, Amount$1.from(input.amount));
 	}
 	/**
 	* Executes a pending mint operation and returns the latest operation state.
@@ -12120,13 +12099,9 @@ var MintOpsApi = class {
 	async get(operationId) {
 		return this.mintOperationService.getOperation(operationId);
 	}
-	/** Returns a mint operation by mint URL, method, and quote ID, or `null` if not found. */
-	async getByQuote(input) {
-		return this.mintOperationService.getOperationByQuote(input.mintUrl, input.method, input.quoteId);
-	}
 	/** Lists mint operations for a mint URL and quote ID. */
-	async listByQuote(mintUrl, quoteId) {
-		return this.mintOperationService.listOperationsByQuote(mintUrl, quoteId);
+	async listByQuote(input) {
+		return this.mintOperationService.listOperationsByQuote(input.mintUrl, input.quoteId);
 	}
 	/** Lists mint operations that are pending redemption or remote settlement. */
 	async listPending() {
@@ -12188,29 +12163,26 @@ var MintQuoteApi = class {
 	}
 	async create(input) {
 		if (input.method === "bolt11") {
-			const bolt11Input = input;
-			const parsed = parseUnitAmount(bolt11Input.amount, { explicitUnit: bolt11Input.unit });
-			return this.quoteLifecycle.createMintQuote(bolt11Input.mintUrl, bolt11Input.method, { amount: parsed });
+			const parsed = parseUnitAmount(input.amount, { explicitUnit: input.unit });
+			return this.quoteLifecycle.createMintQuote(input.mintUrl, input.method, { amount: parsed });
 		}
 		if (input.method === "bolt12") {
-			const bolt12Input = input;
-			const parsed = bolt12Input.amount !== void 0 ? parseUnitAmount(bolt12Input.amount, { explicitUnit: bolt12Input.unit }) : void 0;
-			const unit = parsed?.unit ?? normalizeUnit(bolt12Input.unit, { defaultUnit: DEFAULT_UNIT });
+			const parsed = input.amount !== void 0 ? parseUnitAmount(input.amount, { explicitUnit: input.unit }) : void 0;
+			const unit = parsed?.unit ?? normalizeUnit(input.unit, { defaultUnit: DEFAULT_UNIT });
 			const createQuoteData = parsed === void 0 ? {
 				unit,
-				description: bolt12Input.description
+				description: input.description
 			} : {
 				unit,
 				amount: parsed,
-				description: bolt12Input.description
+				description: input.description
 			};
-			return this.quoteLifecycle.createMintQuote(bolt12Input.mintUrl, bolt12Input.method, { ...createQuoteData });
+			return this.quoteLifecycle.createMintQuote(input.mintUrl, input.method, createQuoteData);
 		}
-		const onchainInput = input;
-		return this.quoteLifecycle.createMintQuote(onchainInput.mintUrl, onchainInput.method, { unit: normalizeUnit(onchainInput.unit, { defaultUnit: DEFAULT_UNIT }) });
+		return this.quoteLifecycle.createMintQuote(input.mintUrl, input.method, { unit: normalizeUnit(input.unit, { defaultUnit: DEFAULT_UNIT }) });
 	}
 	get(input) {
-		return this.quoteLifecycle.getMintQuote(input.mintUrl, input.method, input.quoteId);
+		return this.quoteLifecycle.getMintQuoteById(input);
 	}
 	import(input) {
 		return this.quoteLifecycle.importMintQuote(input.mintUrl, input.method, input.quote);
@@ -12219,7 +12191,7 @@ var MintQuoteApi = class {
 		return this.quoteLifecycle.getPendingMintQuotes(input.method);
 	}
 	refresh(input) {
-		return this.quoteLifecycle.refreshMintQuote(input.mintUrl, input.method, input.quoteId);
+		return this.quoteLifecycle.refreshMintQuoteById(input);
 	}
 };
 var MeltQuoteApi = class {
@@ -12230,13 +12202,13 @@ var MeltQuoteApi = class {
 		return this.quoteLifecycle.createMeltQuote(input.mintUrl, input.method, input.methodData, input.unit);
 	}
 	get(input) {
-		return this.quoteLifecycle.getMeltQuote(input.mintUrl, input.method, input.quoteId);
+		return this.quoteLifecycle.getMeltQuoteById(input);
 	}
 	listPending(input = {}) {
 		return this.quoteLifecycle.getPendingMeltQuotes(input.method);
 	}
 	refresh(input) {
-		return this.quoteLifecycle.refreshMeltQuote(input.mintUrl, input.method, input.quoteId);
+		return this.quoteLifecycle.refreshMeltQuoteById(input);
 	}
 };
 /**
@@ -12361,30 +12333,45 @@ var PluginHost = class {
 	readyPlugins = /* @__PURE__ */ new WeakSet();
 	initPromises = /* @__PURE__ */ new WeakMap();
 	readyPromises = /* @__PURE__ */ new WeakMap();
+	lifecyclePromises = /* @__PURE__ */ new Set();
 	services;
 	initialized = false;
 	readyPhase = false;
+	disposed = false;
+	disposePromise;
 	use(plugin) {
+		if (this.disposePromise || this.disposed) throw new Error("Cannot register plugin after disposal has started");
 		if (this.registeredPlugins.has(plugin)) throw new DuplicatePluginRegistrationError(plugin.name);
 		this.registeredPlugins.add(plugin);
 		this.plugins.push(plugin);
 		if (this.initialized && this.services) {
 			const services = this.services;
-			const initPromise = this.ensureInitialized(plugin, services);
-			if (this.readyPhase) initPromise.then(() => this.ensureReady(plugin, services));
+			this.trackLifecycle(this.initializeRuntimePlugin(plugin, services));
 		}
 	}
 	async init(services) {
+		if (this.disposePromise || this.disposed) throw new Error("Cannot initialize plugins after disposal has started");
 		this.services = services;
 		this.initialized = true;
 		for (const p of this.plugins) await this.ensureInitialized(p, services);
 	}
 	async ready() {
+		if (this.disposePromise || this.disposed) throw new Error("Cannot mark plugins ready after disposal has started");
 		if (!this.services) return;
 		this.readyPhase = true;
 		for (const p of this.plugins) await this.ensureReady(p, this.services);
 	}
 	async dispose() {
+		if (this.disposePromise) {
+			await this.disposePromise;
+			return;
+		}
+		if (this.disposed) return;
+		this.disposePromise = this.runDispose();
+		await this.disposePromise;
+	}
+	async runDispose() {
+		await this.waitForLifecycle();
 		const errors = [];
 		for (const p of this.plugins) try {
 			await p.onDispose?.();
@@ -12404,6 +12391,23 @@ var PluginHost = class {
 			}
 		}
 		if (errors.length > 0) console.error("One or more plugin dispose/cleanup handlers failed");
+		this.disposed = true;
+	}
+	async initializeRuntimePlugin(plugin, services) {
+		await this.ensureInitialized(plugin, services);
+		if (this.readyPhase) await this.ensureReady(plugin, services);
+	}
+	trackLifecycle(promise) {
+		this.lifecyclePromises.add(promise);
+		promise.then(() => {
+			this.lifecyclePromises.delete(promise);
+		}, () => {
+			this.lifecyclePromises.delete(promise);
+		});
+		return promise;
+	}
+	async waitForLifecycle() {
+		while (this.lifecyclePromises.size > 0) await Promise.allSettled([...this.lifecyclePromises]);
 	}
 	/**
 	* Get all registered plugin extensions
@@ -12418,11 +12422,11 @@ var PluginHost = class {
 			await existing;
 			return;
 		}
-		const promise = this.runInit(plugin, services).then(() => {
+		const promise = this.trackLifecycle(this.runInit(plugin, services).then(() => {
 			this.initializedPlugins.add(plugin);
 		}).finally(() => {
 			this.initPromises.delete(plugin);
-		});
+		}));
 		this.initPromises.set(plugin, promise);
 		await promise;
 	}
@@ -12434,11 +12438,11 @@ var PluginHost = class {
 			await existing;
 			return;
 		}
-		const promise = this.runReady(plugin, services).then(() => {
+		const promise = this.trackLifecycle(this.runReady(plugin, services).then(() => {
 			this.readyPlugins.add(plugin);
 		}).finally(() => {
 			this.readyPromises.delete(plugin);
-		});
+		}));
 		this.readyPromises.set(plugin, promise);
 		await promise;
 	}
@@ -12512,6 +12516,39 @@ function getRemoteStateChange(existing, incoming, rawSnapshot) {
 	}
 	return false;
 }
+function serializeMeltChange(change) {
+	return change ?? [];
+}
+function getMeaningfulMeltQuoteFields(quote) {
+	const base = {
+		method: quote.method,
+		quoteId: quote.quoteId,
+		request: quote.request,
+		amount: quote.amount.toString(),
+		unit: quote.unit,
+		expiry: quote.expiry,
+		state: quote.state,
+		change: serializeMeltChange(quote.change)
+	};
+	if (quote.method === "onchain") return {
+		...base,
+		fee_options: quote.fee_options.map((option) => ({
+			fee_index: option.fee_index,
+			fee_reserve: option.fee_reserve.toString(),
+			estimated_blocks: option.estimated_blocks
+		})),
+		outpoint: quote.outpoint ?? null
+	};
+	return {
+		...base,
+		fee_reserve: quote.fee_reserve.toString(),
+		payment_preimage: quote.payment_preimage ?? null
+	};
+}
+function getMeltQuoteChange(existing, incoming) {
+	if (!existing) return true;
+	return JSON.stringify(getMeaningfulMeltQuoteFields(existing)) !== JSON.stringify(getMeaningfulMeltQuoteFields(incoming));
+}
 var QuoteLifecycle = class {
 	mintHandlerProvider;
 	meltHandlerProvider;
@@ -12548,6 +12585,23 @@ var QuoteLifecycle = class {
 			logger: this.logger
 		};
 	}
+	async refreshResolvedMintQuote(existingQuote) {
+		const refreshed = await this.mintHandlerProvider.get(existingQuote.method).fetchRemoteQuote({
+			...this.buildDeps(),
+			quote: existingQuote
+		});
+		const remoteStateChanged = getRemoteStateChange(existingQuote, refreshed);
+		const quote = await this.persistCanonicalMintQuote(refreshed);
+		await this.emitMintQuoteUpdatedIfNeeded(quote, remoteStateChanged);
+		return quote;
+	}
+	async refreshResolvedMeltQuote(existingQuote) {
+		const refreshed = await this.meltHandlerProvider.get(existingQuote.method).fetchRemoteQuote({
+			...this.buildDeps(),
+			quote: existingQuote
+		});
+		return await this.recordMeltQuoteObservation(refreshed);
+	}
 	async createMintQuote(mintUrl, methodOrIntent, createQuoteDataOrMethod) {
 		const method = typeof methodOrIntent === "string" ? methodOrIntent : typeof createQuoteDataOrMethod === "string" ? createQuoteDataOrMethod : "bolt11";
 		const createQuoteData = typeof methodOrIntent === "string" ? createQuoteDataOrMethod : { amount: normalizeUnitAmount(methodOrIntent) };
@@ -12583,26 +12637,37 @@ var QuoteLifecycle = class {
 	getMintQuote(mintUrl, method, quoteId) {
 		return this.mintQuoteRepository.getMintQuote(mintUrl, method, quoteId);
 	}
+	getMintQuoteById(identity) {
+		return this.mintQuoteRepository.getMintQuoteById(identity);
+	}
 	getPendingMintQuotes(method) {
 		return this.mintQuoteRepository.getPendingMintQuotes(method);
 	}
 	async refreshMintQuote(mintUrl, method, quoteId) {
 		const existingQuote = await this.mintQuoteRepository.getMintQuote(mintUrl, method, quoteId);
 		if (!existingQuote) throw new Error(`Mint quote ${quoteId} for ${method} at ${mintUrl} was not found`);
-		const refreshed = await this.mintHandlerProvider.get(method).fetchRemoteQuote({
-			...this.buildDeps(),
-			quote: existingQuote
-		});
-		const remoteStateChanged = getRemoteStateChange(existingQuote, refreshed);
-		const quote = await this.persistCanonicalMintQuote(refreshed);
-		await this.emitMintQuoteUpdatedIfNeeded(quote, remoteStateChanged);
-		return quote;
+		return this.refreshResolvedMintQuote(existingQuote);
+	}
+	async refreshMintQuoteById(identity) {
+		const existingQuote = await this.mintQuoteRepository.getMintQuoteById(identity);
+		if (!existingQuote) throw new Error(`Mint quote ${identity.quoteId} at ${identity.mintUrl} was not found`);
+		return this.refreshResolvedMintQuote(existingQuote);
 	}
 	async requireMintQuoteForPrepare(mintUrl, method, quoteId, expectedUnit) {
 		const quote = await this.mintQuoteRepository.getMintQuote(mintUrl, method, quoteId);
 		if (!quote) throw new Error(`Mint quote ${quoteId} for ${method} at ${mintUrl} was not found`);
 		if (expectedUnit && quote.unit !== expectedUnit.toLowerCase()) throw new Error(`Mint quote ${quoteId} unit ${quote.unit} does not match requested unit ${expectedUnit}`);
 		this.assertMintQuoteCanPrepare(quote, `mint quote ${quoteId}`);
+		return quote;
+	}
+	async requireMintQuoteRefForPrepare(ref) {
+		const quote = await this.mintQuoteRepository.getMintQuoteById({
+			mintUrl: ref.mintUrl,
+			quoteId: ref.quoteId
+		});
+		if (!quote) throw new Error(`Mint quote ${ref.quoteId} at ${ref.mintUrl} was not found`);
+		if (quote.method !== ref.method) throw new QuoteIdentityConflictError("mint", quote.mintUrl, quote.quoteId, [ref.method, quote.method], `Mint quote ${quote.quoteId} at ${quote.mintUrl} resolved to method ${quote.method}, not requested method ${ref.method}`);
+		this.assertMintQuoteCanPrepare(quote, `mint quote ${ref.quoteId}`);
 		return quote;
 	}
 	async loadMintQuoteSnapshotForOperation(op) {
@@ -12701,11 +12766,13 @@ var QuoteLifecycle = class {
 			wallet
 		});
 		if (quote.unit !== normalizedUnit) throw new ProofValidationError(`Melt quote ${quote.quoteId} unit ${quote.unit} does not match requested unit ${normalizedUnit}`);
-		await this.meltQuoteRepository.upsertMeltQuote(quote);
-		return await this.meltQuoteRepository.getMeltQuote(mintUrl, method, quote.quoteId) ?? quote;
+		return await this.recordMeltQuoteObservation(quote);
 	}
 	getMeltQuote(mintUrl, method, quoteId) {
 		return this.meltQuoteRepository.getMeltQuote(mintUrl, method, quoteId);
+	}
+	getMeltQuoteById(identity) {
+		return this.meltQuoteRepository.getMeltQuoteById(identity);
 	}
 	getPendingMeltQuotes(method) {
 		return this.meltQuoteRepository.getPendingMeltQuotes(method);
@@ -12713,20 +12780,28 @@ var QuoteLifecycle = class {
 	async refreshMeltQuote(mintUrl, method, quoteId) {
 		const existingQuote = await this.meltQuoteRepository.getMeltQuote(mintUrl, method, quoteId);
 		if (!existingQuote) throw new Error(`Melt quote ${quoteId} for ${method} at ${mintUrl} was not found`);
-		const refreshed = await this.meltHandlerProvider.get(method).fetchRemoteQuote({
-			...this.buildDeps(),
-			quote: existingQuote
-		});
-		await this.meltQuoteRepository.upsertMeltQuote(refreshed);
-		const quote = await this.meltQuoteRepository.getMeltQuote(existingQuote.mintUrl, method, quoteId);
-		if (!quote) throw new Error(`Cannot refresh quote: melt quote ${quoteId} for ${method} at ${mintUrl} was not found after persistence`);
-		return quote;
+		return this.refreshResolvedMeltQuote(existingQuote);
+	}
+	async refreshMeltQuoteById(identity) {
+		const existingQuote = await this.meltQuoteRepository.getMeltQuoteById(identity);
+		if (!existingQuote) throw new Error(`Melt quote ${identity.quoteId} at ${identity.mintUrl} was not found`);
+		return this.refreshResolvedMeltQuote(existingQuote);
 	}
 	async requireMeltQuoteForPrepare(mintUrl, method, quoteId, expectedUnit) {
 		const quote = await this.meltQuoteRepository.getMeltQuote(mintUrl, method, quoteId);
 		if (!quote) throw new Error(`Melt quote ${quoteId} for ${method} at ${mintUrl} was not found`);
 		if (expectedUnit && quote.unit !== normalizeUnit(expectedUnit, { defaultUnit: DEFAULT_UNIT })) throw new Error(`Melt quote ${quoteId} unit ${quote.unit} does not match requested unit ${expectedUnit}`);
 		this.assertMeltQuoteCanPrepare(quote, `melt quote ${quoteId}`);
+		return quote;
+	}
+	async requireMeltQuoteRefForPrepare(ref) {
+		const quote = await this.meltQuoteRepository.getMeltQuoteById({
+			mintUrl: ref.mintUrl,
+			quoteId: ref.quoteId
+		});
+		if (!quote) throw new Error(`Melt quote ${ref.quoteId} at ${ref.mintUrl} was not found`);
+		if (quote.method !== ref.method) throw new QuoteIdentityConflictError("melt", quote.mintUrl, quote.quoteId, [ref.method, quote.method], `Melt quote ${quote.quoteId} at ${quote.mintUrl} resolved to method ${quote.method}, not requested method ${ref.method}`);
+		this.assertMeltQuoteCanPrepare(quote, `melt quote ${ref.quoteId}`);
 		return quote;
 	}
 	async loadMeltQuoteSnapshotForOperation(op) {
@@ -12737,6 +12812,31 @@ var QuoteLifecycle = class {
 		if (quote.unit !== op.unit) throw new Error(`Cannot prepare operation ${op.id}: melt quote ${op.quoteId} unit ${quote.unit} does not match requested unit ${op.unit}`);
 		return meltQuoteToMethodSnapshot(quote);
 	}
+	/**
+	* Records a canonical melt quote observation and emits `melt-quote:updated` only when storage
+	* changed meaningfully.
+	*/
+	async recordMeltQuoteObservation(canonicalQuote) {
+		const { quote, remoteQuoteChanged } = await this.resolveAndPersistMeltQuoteObservation(canonicalQuote);
+		await this.emitMeltQuoteUpdatedIfNeeded(quote, remoteQuoteChanged);
+		return quote;
+	}
+	async resolveAndPersistMeltQuoteObservation(canonicalQuote) {
+		const existing = await this.meltQuoteRepository.getMeltQuote(canonicalQuote.mintUrl, canonicalQuote.method, canonicalQuote.quoteId);
+		if (existing?.state === "PAID") return {
+			quote: existing,
+			remoteQuoteChanged: false
+		};
+		const remoteQuoteChanged = getMeltQuoteChange(existing, canonicalQuote);
+		if (!remoteQuoteChanged && existing) return {
+			quote: existing,
+			remoteQuoteChanged: false
+		};
+		return {
+			quote: await this.persistCanonicalMeltQuote(canonicalQuote),
+			remoteQuoteChanged
+		};
+	}
 	async persistCanonicalMintQuote(canonicalQuote) {
 		await this.mintQuoteRepository.upsertMintQuote(canonicalQuote);
 		return await this.mintQuoteRepository.getMintQuote(canonicalQuote.mintUrl, canonicalQuote.method, canonicalQuote.quoteId) ?? canonicalQuote;
@@ -12744,6 +12844,21 @@ var QuoteLifecycle = class {
 	async emitMintQuoteUpdatedIfNeeded(quote, remoteStateChanged) {
 		if (!remoteStateChanged) return;
 		await this.eventBus.emit("mint-quote:updated", {
+			mintUrl: quote.mintUrl,
+			method: quote.method,
+			quoteId: quote.quoteId,
+			quote
+		});
+	}
+	async persistCanonicalMeltQuote(canonicalQuote) {
+		await this.meltQuoteRepository.upsertMeltQuote(canonicalQuote);
+		const quote = await this.meltQuoteRepository.getMeltQuote(canonicalQuote.mintUrl, canonicalQuote.method, canonicalQuote.quoteId);
+		if (!quote) throw new Error(`Cannot persist quote observation: melt quote ${canonicalQuote.quoteId} for ${canonicalQuote.method} at ${canonicalQuote.mintUrl} was not found after persistence`);
+		return quote;
+	}
+	async emitMeltQuoteUpdatedIfNeeded(quote, remoteQuoteChanged) {
+		if (!remoteQuoteChanged) return;
+		await this.eventBus.emit("melt-quote:updated", {
 			mintUrl: quote.mintUrl,
 			method: quote.method,
 			quoteId: quote.quoteId,
@@ -12860,6 +12975,8 @@ var Manager = class {
 	originalProcessorConfig;
 	mintRequestProvider;
 	mintAdapter;
+	disposed = false;
+	disposePromise;
 	constructor(repositories, seedGetter, logger, webSocketFactory, plugins, watchers, processors, subscriptions) {
 		this.logger = logger ?? new NullLogger();
 		this.eventBus = this.createEventBus();
@@ -12920,6 +13037,10 @@ var Manager = class {
 		};
 		this.eventBus.on("auth-session:updated", clearWalletCache);
 		this.eventBus.on("auth-session:deleted", clearWalletCache);
+		this.eventBus.on("send:finalized", clearWalletCache);
+		this.eventBus.on("mint-op:finalized", clearWalletCache);
+		this.eventBus.on("receive-op:finalized", clearWalletCache);
+		this.eventBus.on("melt-op:finalized", clearWalletCache);
 	}
 	on(event, handler) {
 		return this.eventBus.on(event, handler);
@@ -12960,12 +13081,28 @@ var Manager = class {
 		await this.pluginHost.ready();
 	}
 	async dispose() {
+		if (this.disposePromise) {
+			await this.disposePromise;
+			return;
+		}
+		if (this.disposed) return;
+		this.disposePromise = this.disposeOwnedResources();
+		await this.disposePromise;
+	}
+	async disposeOwnedResources() {
+		this.disposed = true;
+		this.subscriptionsPaused = true;
+		await this.disableMintOperationWatcher();
+		await this.disableProofStateWatcher();
+		await this.disableMintOperationProcessor();
 		await this.pluginHost.dispose();
+		this.subscriptions.closeAll();
 	}
 	off(event, handler) {
 		return this.eventBus.off(event, handler);
 	}
 	async enableMintOperationWatcher(options) {
+		if (this.disposed) return;
 		if (this.mintOperationWatcher?.isRunning()) return;
 		const watcherLogger = this.logger.child ? this.logger.child({ module: "MintOperationWatcherService" }) : this.logger;
 		this.mintOperationWatcher = new MintOperationWatcherService(this.subscriptions, this.mintService, this.mintOperationService, this.quoteLifecycle, this.eventBus, watcherLogger, {
@@ -12980,6 +13117,7 @@ var Manager = class {
 		this.mintOperationWatcher = void 0;
 	}
 	async enableMintOperationProcessor(options) {
+		if (this.disposed) return false;
 		if (this.mintOperationProcessor?.isRunning()) return false;
 		const processorLogger = this.logger.child ? this.logger.child({ module: "MintOperationProcessor" }) : this.logger;
 		this.mintOperationProcessor = new MintOperationProcessor(this.mintOperationService, this.quoteLifecycle, this.eventBus, processorLogger, options);
@@ -12996,6 +13134,7 @@ var Manager = class {
 		await this.mintOperationProcessor.waitForCompletion();
 	}
 	async enableProofStateWatcher(options) {
+		if (this.disposed) return;
 		if (this.proofStateWatcher?.isRunning()) return;
 		const watcherLogger = this.logger.child ? this.logger.child({ module: "ProofStateWatcherService" }) : this.logger;
 		this.proofStateWatcher = new ProofStateWatcherService(this.subscriptions, this.mintService, this.proofService, this.proofRepository, this.eventBus, watcherLogger, { watchExistingInflightOnStart: options?.watchExistingInflightOnStart ?? true });
@@ -13041,7 +13180,9 @@ var Manager = class {
 			}
 			try {
 				const imported = await this.quoteLifecycle.importMintQuote(quote.mintUrl, "bolt11", mintQuoteToMethodSnapshot(quote));
-				const operation = await this.mintOperationService.prepare(imported.mintUrl, imported.method, imported.quoteId, {});
+				const amount = getMintQuoteAmount(imported);
+				if (!amount) throw new Error(`Legacy mint quote ${imported.quoteId} does not have a fixed amount`);
+				const operation = await this.mintOperationService.prepare(imported, amount);
 				reconciled.push(operation.quoteId);
 			} catch (err) {
 				this.logger.warn("Failed to reconcile legacy mint quote", {
@@ -13077,6 +13218,10 @@ var Manager = class {
 		await this.eventBus.emit("subscriptions:paused", void 0);
 	}
 	async resumeSubscriptions() {
+		if (this.disposed) {
+			this.logger.debug("Cannot resume subscriptions after manager disposal");
+			return;
+		}
 		this.subscriptionsPaused = false;
 		this.logger.info("Resuming subscriptions");
 		await this.eventBus.emit("subscriptions:resumed", void 0);
@@ -13546,11 +13691,88 @@ var MemoryMeltOperationRepository = class {
 };
 
 //#endregion
+//#region repositories/memory/MemoryMeltQuoteRepository.ts
+var MemoryMeltQuoteRepository = class {
+	quotes = /* @__PURE__ */ new Map();
+	makeKey(mintUrl, method, quoteId) {
+		return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
+	}
+	async getMeltQuoteById(identity) {
+		const normalizedMintUrl = normalizeMintUrl(identity.mintUrl);
+		const matches = Array.from(this.quotes.values()).filter((quote) => quote.mintUrl === normalizedMintUrl && quote.quoteId === identity.quoteId);
+		if (matches.length > 1) throw new QuoteIdentityConflictError("melt", normalizedMintUrl, identity.quoteId, matches.map((quote) => quote.method));
+		return matches[0] ? { ...matches[0] } : null;
+	}
+	async getMeltQuote(mintUrl, method, quoteId) {
+		const quote = this.quotes.get(this.makeKey(mintUrl, method, quoteId));
+		return quote ? { ...quote } : null;
+	}
+	async upsertMeltQuote(quote) {
+		const normalizedMintUrl = normalizeMintUrl(quote.mintUrl);
+		const now = Date.now();
+		const identityOwner = await this.getMeltQuoteById({
+			mintUrl: normalizedMintUrl,
+			quoteId: quote.quoteId
+		});
+		if (identityOwner && identityOwner.method !== quote.method) throw new QuoteIdentityConflictError("melt", normalizedMintUrl, quote.quoteId, [identityOwner.method, quote.method], `Melt quote ${quote.quoteId} at ${normalizedMintUrl} already exists for method ${identityOwner.method}`);
+		const existing = await this.getMeltQuote(normalizedMintUrl, quote.method, quote.quoteId);
+		this.quotes.set(this.makeKey(normalizedMintUrl, quote.method, quote.quoteId), {
+			...quote,
+			mintUrl: normalizedMintUrl,
+			quote: quote.quoteId,
+			createdAt: existing?.createdAt ?? quote.createdAt,
+			updatedAt: now
+		});
+	}
+	async getPendingMeltQuotes(method) {
+		const result = [];
+		for (const quote of this.quotes.values()) {
+			if (method && quote.method !== method) continue;
+			if (quote.state !== "PAID") result.push({ ...quote });
+		}
+		return result;
+	}
+};
+
+//#endregion
+//#region repositories/memory/MemoryLegacyMintQuoteRepository.ts
+var MemoryLegacyMintQuoteRepository = class {
+	quotes = /* @__PURE__ */ new Map();
+	makeKey(mintUrl, method, quoteId) {
+		return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
+	}
+	async upsertMintQuote(quote) {
+		const normalizedMintUrl = normalizeMintUrl(quote.mintUrl);
+		const key = this.makeKey(normalizedMintUrl, quote.method, quote.quoteId);
+		this.quotes.set(key, {
+			...quote,
+			mintUrl: normalizedMintUrl,
+			quote: quote.quoteId
+		});
+	}
+	async getPendingLegacyMintQuotes(mintUrl) {
+		const normalizedMintUrl = mintUrl ? normalizeMintUrl(mintUrl) : void 0;
+		const result = [];
+		for (const quote of this.quotes.values()) {
+			if (normalizedMintUrl && quote.mintUrl !== normalizedMintUrl) continue;
+			if (isMintQuotePending(quote)) result.push({ ...quote });
+		}
+		return result;
+	}
+};
+
+//#endregion
 //#region repositories/memory/MemoryMintQuoteRepository.ts
 var MemoryMintQuoteRepository = class {
 	quotes = /* @__PURE__ */ new Map();
 	makeKey(mintUrl, method, quoteId) {
 		return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
+	}
+	async getMintQuoteById(identity) {
+		const normalizedMintUrl = normalizeMintUrl(identity.mintUrl);
+		const matches = Array.from(this.quotes.values()).filter((quote) => quote.mintUrl === normalizedMintUrl && quote.quoteId === identity.quoteId);
+		if (matches.length > 1) throw new QuoteIdentityConflictError("mint", normalizedMintUrl, identity.quoteId, matches.map((quote) => quote.method));
+		return matches[0] ? { ...matches[0] } : null;
 	}
 	async getMintQuote(mintUrl, method, quoteId) {
 		const key = this.makeKey(mintUrl, method, quoteId);
@@ -13560,6 +13782,11 @@ var MemoryMintQuoteRepository = class {
 	async upsertMintQuote(quote) {
 		const normalizedMintUrl = normalizeMintUrl(quote.mintUrl);
 		const now = Date.now();
+		const identityOwner = await this.getMintQuoteById({
+			mintUrl: normalizedMintUrl,
+			quoteId: quote.quoteId
+		});
+		if (identityOwner && identityOwner.method !== quote.method) throw new QuoteIdentityConflictError("mint", normalizedMintUrl, quote.quoteId, [identityOwner.method, quote.method], `Mint quote ${quote.quoteId} at ${normalizedMintUrl} already exists for method ${identityOwner.method}`);
 		const existing = await this.getMintQuote(normalizedMintUrl, quote.method, quote.quoteId);
 		const key = this.makeKey(normalizedMintUrl, quote.method, quote.quoteId);
 		this.quotes.set(key, {
@@ -13588,33 +13815,6 @@ var MemoryMintQuoteRepository = class {
 		for (const q of this.quotes.values()) {
 			if (method && q.method !== method) continue;
 			if (isMintQuotePending(q)) result.push({ ...q });
-		}
-		return result;
-	}
-};
-
-//#endregion
-//#region repositories/memory/MemoryLegacyMintQuoteRepository.ts
-var MemoryLegacyMintQuoteRepository = class {
-	quotes = /* @__PURE__ */ new Map();
-	makeKey(mintUrl, method, quoteId) {
-		return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
-	}
-	async upsertMintQuote(quote) {
-		const normalizedMintUrl = normalizeMintUrl(quote.mintUrl);
-		const key = this.makeKey(normalizedMintUrl, quote.method, quote.quoteId);
-		this.quotes.set(key, {
-			...quote,
-			mintUrl: normalizedMintUrl,
-			quote: quote.quoteId
-		});
-	}
-	async getPendingLegacyMintQuotes(mintUrl) {
-		const normalizedMintUrl = mintUrl ? normalizeMintUrl(mintUrl) : void 0;
-		const result = [];
-		for (const quote of this.quotes.values()) {
-			if (normalizedMintUrl && quote.mintUrl !== normalizedMintUrl) continue;
-			if (isMintQuotePending(quote)) result.push({ ...quote });
 		}
 		return result;
 	}
@@ -13811,39 +14011,6 @@ var MemoryProofRepository = class {
 		const all = [];
 		for (const map of this.proofsByMint.values()) for (const p of map.values()) if (p.state === "ready" && p.usedByOperationId) all.push({ ...p });
 		return all;
-	}
-};
-
-//#endregion
-//#region repositories/memory/MemoryMeltQuoteRepository.ts
-var MemoryMeltQuoteRepository = class {
-	quotes = /* @__PURE__ */ new Map();
-	makeKey(mintUrl, method, quoteId) {
-		return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
-	}
-	async getMeltQuote(mintUrl, method, quoteId) {
-		const quote = this.quotes.get(this.makeKey(mintUrl, method, quoteId));
-		return quote ? { ...quote } : null;
-	}
-	async upsertMeltQuote(quote) {
-		const normalizedMintUrl = normalizeMintUrl(quote.mintUrl);
-		const now = Date.now();
-		const existing = await this.getMeltQuote(normalizedMintUrl, quote.method, quote.quoteId);
-		this.quotes.set(this.makeKey(normalizedMintUrl, quote.method, quote.quoteId), {
-			...quote,
-			mintUrl: normalizedMintUrl,
-			quote: quote.quoteId,
-			createdAt: existing?.createdAt ?? quote.createdAt,
-			updatedAt: now
-		});
-	}
-	async getPendingMeltQuotes(method) {
-		const result = [];
-		for (const quote of this.quotes.values()) {
-			if (method && quote.method !== method) continue;
-			if (quote.state !== "PAID") result.push({ ...quote });
-		}
-		return result;
 	}
 };
 
@@ -14127,4 +14294,4 @@ var MemoryRepositories = class {
 };
 
 //#endregion
-export { Amount, AuthApi, AuthService, AuthSessionError, AuthSessionExpiredError, AuthSessionService, ConsoleLogger, CounterService, DEFAULT_UNIT, DuplicatePluginRegistrationError, ExtensionRegistrationError, HistoryApi, HistoryService, HttpResponseError, KeyRingApi, KeyRingService, KeysetSyncError, Manager, MeltOperationService, MeltOpsApi, MeltQuoteApi, MemoryAuthSessionRepository, MemoryCounterRepository, MemoryHistoryRepository, MemoryKeyRingRepository, MemoryKeysetRepository, MemoryLegacyMintQuoteRepository, MemoryMeltOperationRepository, MemoryMeltQuoteRepository, MemoryMintOperationRepository, MemoryMintQuoteRepository, MemoryMintRepository, MemoryPaymentRequestReceiveAttemptRepository, MemoryPaymentRequestReceiveOperationRepository, MemoryProofRepository, MemoryReceiveOperationRepository, MemoryRepositories, MemorySendOperationRepository, MintApi, MintFetchError, MintOperationError, MintOperationProcessor, MintOperationService, MintOperationWatcherService, MintOpsApi, MintQuoteApi, MintService, NetworkError, OperationInProgressError, OpsApi, PaymentRequestError, PaymentRequestReceiveService, PaymentRequestReceiveTransportHandlerProvider, PaymentRequestService, PaymentRequestsApi, PluginHost, ProofOperationError, ProofService, ProofStateWatcherService, ProofValidationError, QuoteApi, ReceiveOperationService, ReceiveOpsApi, SeedService, SendOperationService, SendOpsApi, SubscriptionApi, SubscriptionManager, TokenService, TokenValidationError, UnitMismatchError, UnitValidationError, UnknownMintError, WalletApi, WalletBalancesApi, WalletRestoreService, WalletService, WsConnectionManager, assertSameUnit, assertUnitAmount, compareHistoryEntries, createSendOperation, deserializeAmount, deserializeToken, getDecodedToken, getEncodedToken, getKeepProofSecrets, getMintQuoteAmount, getMintQuoteAvailableAmount, getMintQuoteRemoteState, getSendProofSecrets, getTokenMetadata, hasPreparedData, initializeCoco, isExecutingOperation, isFinalizedOperation, isInitOperation, isLegacyHistoryEntry, isMintQuotePending, isOperationHistoryEntry, isPendingOperation, isPreparedOperation, isRolledBackOperation, isRollingBackOperation, isStatefulMintQuote, isTerminalOperation, isUnitAmountLikeObject, legacyHistoryId, meltQuoteFromBolt11Response, meltQuoteFromBolt12Response, meltQuoteFromOnchainResponse, meltQuoteToMethodSnapshot, mintQuoteFromBolt11Response, mintQuoteFromBolt12Response, mintQuoteFromOnchainResponse, mintQuoteToMethodSnapshot, normalizeMeltMethodData, normalizeMintUrl, normalizeUnit, normalizeUnitAmount, normalizeUnitList, operationHistoryId, parseHistoryEntryId, parseUnitAmount, projectLegacyHistoryRow, projectMeltOperation, projectMintOperation, projectOperationToHistoryEntry, projectReceiveOperation, projectSendOperation, resolveOnchainMeltFeeOption, sameUnitAmount, serializeAmount, stringifyJson, sumAmounts, toAmount };
+export { Amount, AuthApi, AuthSessionError, AuthSessionExpiredError, ConsoleLogger, DEFAULT_UNIT, HistoryApi, HttpResponseError, KeyRingApi, KeysetSyncError, Manager, MeltOpsApi, MeltQuoteApi, MemoryRepositories, MintApi, MintFetchError, MintOperationError, MintOpsApi, MintQuoteApi, NetworkError, OperationInProgressError, OpsApi, PaymentRequestError, PaymentRequestsApi, ProofOperationError, ProofValidationError, QuoteApi, QuoteIdentityConflictError, ReceiveOpsApi, SendOpsApi, SubscriptionApi, TokenValidationError, UnitMismatchError, UnitValidationError, UnknownMintError, WalletApi, WalletBalancesApi, assertSameUnit, assertUnitAmount, compareHistoryEntries, deserializeAmount, deserializeToken, getDecodedToken, getEncodedToken, getMintQuoteAmount, getMintQuoteAvailableAmount, getMintQuoteRemoteState, getTokenMetadata, initializeCoco, isLegacyHistoryEntry, isMintQuotePending, isOperationHistoryEntry, isStatefulMintQuote, isUnitAmountLikeObject, legacyHistoryId, meltQuoteFromBolt11Response, meltQuoteFromBolt12Response, meltQuoteFromOnchainResponse, meltQuoteToMethodSnapshot, mintQuoteFromBolt11Response, mintQuoteFromBolt12Response, mintQuoteFromOnchainResponse, mintQuoteToMethodSnapshot, normalizeMeltMethodData, normalizeMintUrl, normalizeUnit, normalizeUnitAmount, normalizeUnitList, operationHistoryId, parseHistoryEntryId, parseUnitAmount, projectLegacyHistoryRow, projectMeltOperation, projectMintOperation, projectOperationToHistoryEntry, projectReceiveOperation, projectSendOperation, resolveOnchainMeltFeeOption, sameUnitAmount, serializeAmount, stringifyJson, sumAmounts, toAmount };
