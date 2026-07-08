@@ -127,6 +127,24 @@ export class D1MintQuoteRepository implements MintQuoteRepository {
     this.db = db;
   }
 
+
+  async getMintQuoteById(identity: {
+    mintUrl: string;
+    quoteId: string;
+  }): Promise<MintQuote | null> {
+    const normalizedMintUrl = normalizeMintUrl(identity.mintUrl);
+    const rows = await this.db.all<MintQuoteRow>(
+      `SELECT mintUrl, method, quoteId, state, request, amount, unit, expiry, pubkey,
+              quoteDataJson, lastObservedRemoteState, lastObservedRemoteStateAt, reusable,
+              createdAt, updatedAt
+       FROM coco_cashu_canonical_mint_quotes
+       WHERE local_name = ? AND mintUrl = ? AND quoteId = ?`,
+      [this.db.localName, normalizedMintUrl, identity.quoteId],
+    );
+    if (rows.length === 0) return null;
+    return rowToMintQuote(rows[0]);
+  }
+
   async getMintQuote(
     mintUrl: string,
     method: string,

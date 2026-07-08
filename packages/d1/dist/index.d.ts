@@ -15,6 +15,17 @@ declare class D1Db {
   all<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
   get<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T | undefined>;
   exec(sql: string): Promise<void>;
+  /**
+   * Create a prepared statement for use with batch() or direct execution.
+   * Returns D1's native D1PreparedStatement for bind() chaining.
+   */
+  prepare(sql: string): D1PreparedStatement;
+  /**
+   * Execute multiple prepared statements atomically.
+   * D1 batch is a SQL transaction — all succeed or all roll back.
+   * Returns D1Result[] with meta.changes for each statement.
+   */
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
 }
 //#endregion
 //#region src/schema.d.ts
@@ -106,6 +117,10 @@ declare class D1MeltQuoteRepository implements MeltQuoteRepository {
 declare class D1MintQuoteRepository implements MintQuoteRepository {
   private readonly db;
   constructor(db: D1Db);
+  getMintQuoteById(identity: {
+    mintUrl: string;
+    quoteId: string;
+  }): Promise<MintQuote | null>;
   getMintQuote(mintUrl: string, method: string, quoteId: string): Promise<MintQuote | null>;
   upsertMintQuote(quote: MintQuote): Promise<void>;
   setMintQuoteState(mintUrl: string, method: string, quoteId: string, state: MintMethodRemoteState, observedAt?: number): Promise<void>;
