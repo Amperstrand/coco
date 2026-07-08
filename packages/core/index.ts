@@ -98,4 +98,5 @@ export {
   type AmountLike,
 } from '@cashu/cashu-ts';
 export type { WebSocketLike, WebSocketFactory } from './infra/WsConnectionManager.ts';
-export { normalizeMintUrl, toAmount, sumAmounts } from './utils.ts';
+export { normalizeMintUrl, toAmount, sumAmounts, deserializeAmount, deserializeToken, serializeAmount, stringifyJson } from './utils.ts';
+export { normalizeMeltMethodData } from './operations/index.ts';

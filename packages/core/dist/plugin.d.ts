@@ -1,26 +1,64 @@
 import * as _cashu_cashu_ts0 from "@cashu/cashu-ts";
-import { Amount, Amount as Amount$1, AmountLike, AmountLike as AmountLike$1, AuthProvider, GetKeysetsResponse, MeltQuoteBolt11Response, MeltQuoteBolt12Response, MeltQuoteOnchainFeeOption, MeltQuoteOnchainResponse, MeltQuoteState, Mint as Mint$1, MintKeys, MintKeyset, MintQuoteBolt11Response, MintQuoteBolt12Response, MintQuoteOnchainResponse as MintQuoteOnchainResponse$1, NUT10Option, OutputData, PaymentRequest, PaymentRequestPayload, PaymentRequestTransport, PaymentRequestTransportType, Proof, SerializedBlindedSignature, Token, TokenResponse, Wallet, getDecodedToken, getEncodedToken, getTokenMetadata } from "@cashu/cashu-ts";
+import { Amount, AmountLike, AuthProvider, GetKeysetsResponse, MeltQuoteBolt11Response, MeltQuoteBolt12Response, MeltQuoteOnchainFeeOption, MeltQuoteOnchainResponse, MeltQuoteState, Mint, MintKeys, MintKeyset, MintQuoteBolt11Response, MintQuoteBolt12Response, MintQuoteOnchainResponse, NUT10Option, OutputData, PaymentRequest, PaymentRequestPayload, PaymentRequestTransport, PaymentRequestTransportType, Proof, SerializedBlindedSignature, Token, Wallet } from "@cashu/cashu-ts";
 
-//#region models/AuthSession.d.ts
-interface AuthSession {
-  mintUrl: string;
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: number;
-  scope?: string;
-  batPool?: Proof[];
+//#region logging/Logger.d.ts
+type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+interface Logger {
+  error(message: string, ...meta: unknown[]): void;
+  warn(message: string, ...meta: unknown[]): void;
+  info(message: string, ...meta: unknown[]): void;
+  debug(message: string, ...meta: unknown[]): void;
+  log?(level: LogLevel, message: string, ...meta: unknown[]): void;
+  child?(bindings: Record<string, unknown>): Logger;
 }
 //#endregion
-//#region models/MintQuoteState.d.ts
-type MintQuoteState = 'UNPAID' | 'PAID' | 'ISSUED';
+//#region infra/WsConnectionManager.d.ts
+interface WebSocketLike {
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  addEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (event: any) => void): void;
+  removeEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (event: any) => void): void;
+}
+type WebSocketFactory = (url: string) => WebSocketLike;
+//#endregion
+//#region infra/SubscriptionProtocol.d.ts
+type JsonRpcId = number;
+type WsRequestMethod = 'subscribe' | 'unsubscribe';
+type SubscriptionKind = 'bolt11_mint_quote' | 'onchain_mint_quote' | 'bolt12_mint_quote' | 'bolt11_melt_quote' | 'bolt12_melt_quote' | 'onchain_melt_quote' | 'proof_state';
+type UnsubscribeHandler = () => Promise<void>;
+interface SubscribeParams {
+  kind: SubscriptionKind;
+  subId: string;
+  filters: string[];
+}
+interface UnsubscribeParams {
+  subId: string;
+}
+type WsRequest = {
+  jsonrpc: '2.0';
+  method: WsRequestMethod;
+  params: SubscribeParams | UnsubscribeParams;
+  id: JsonRpcId;
+};
+//#endregion
+//#region infra/RealTimeTransport.d.ts
+type TransportEvent = 'open' | 'message' | 'close' | 'error';
+interface RealTimeTransport {
+  on(mintUrl: string, event: TransportEvent, handler: (evt: any) => void): void;
+  send(mintUrl: string, req: WsRequest): void;
+  closeAll(): void;
+  closeMint(mintUrl: string): void;
+  pause(): void;
+  resume(): void;
+}
 //#endregion
 //#region types.d.ts
-type MintInfo = Awaited<ReturnType<Mint$1['getInfo']>>;
+type MintInfo = Awaited<ReturnType<Mint['getInfo']>>;
 type ProofState = 'inflight' | 'ready' | 'spent';
 interface BalanceSnapshot {
-  spendable: Amount$1;
-  reserved: Amount$1;
-  total: Amount$1;
+  spendable: Amount;
+  reserved: Amount;
+  total: Amount;
   unit: string;
 }
 type BalancesByMint = {
@@ -43,9 +81,9 @@ interface BalanceQuery {
  * @deprecated Use BalanceSnapshot instead.
  */
 interface BalanceBreakdown {
-  ready: Amount$1;
-  reserved: Amount$1;
-  total: Amount$1;
+  ready: Amount;
+  reserved: Amount;
+  total: Amount;
 }
 /**
  * @deprecated Use BalancesByMint instead.
@@ -67,110 +105,6 @@ interface CoreProof extends Proof {
    * Used for auditing and rollback purposes.
    */
   createdByOperationId?: string;
-}
-//#endregion
-//#region logging/Logger.d.ts
-type LogLevel = 'error' | 'warn' | 'info' | 'debug';
-interface Logger {
-  error(message: string, ...meta: unknown[]): void;
-  warn(message: string, ...meta: unknown[]): void;
-  info(message: string, ...meta: unknown[]): void;
-  debug(message: string, ...meta: unknown[]): void;
-  log?(level: LogLevel, message: string, ...meta: unknown[]): void;
-  child?(bindings: Record<string, unknown>): Logger;
-}
-//#endregion
-//#region utils.d.ts
-/**
- * Stored form of a BlindedMessage (JSON-safe)
- */
-interface StoredBlindedMessage {
-  amount: string | number;
-  id: string;
-  B_: string;
-}
-/**
- * Serialized form of a single OutputData entry (JSON-safe)
- */
-interface SerializedOutput {
-  blindedMessage: StoredBlindedMessage;
-  blindingFactor: string;
-  secret: string;
-}
-/**
- * Serialized form of OutputData for keep and send (JSON-safe)
- */
-interface SerializedOutputData {
-  keep: SerializedOutput[];
-  send: SerializedOutput[];
-}
-declare function toAmount(value: AmountLike$1): Amount$1;
-declare function sumAmounts(values: Iterable<AmountLike$1>): Amount$1;
-declare function serializeAmount(value: AmountLike$1): string;
-declare function stringifyJson(value: unknown): string;
-declare function deserializeAmount(value: string | number | bigint | Amount$1): Amount$1;
-declare function deserializeToken(value: unknown): Token | undefined;
-/**
- * Normalize a mint URL to prevent duplicates from variations like:
- * - Trailing slashes: https://mint.com/ -> https://mint.com
- * - Case differences in hostname: https://MINT.com -> https://mint.com
- * - Default ports: https://mint.com:443 -> https://mint.com
- * - Redundant path segments: https://mint.com/./path -> https://mint.com/path
- */
-declare function normalizeMintUrl(mintUrl: string): string;
-//#endregion
-//#region models/Counter.d.ts
-interface Counter {
-  mintUrl: string;
-  keysetId: string;
-  counter: number;
-}
-//#endregion
-//#region events/EventBus.d.ts
-type EventHandler<Payload> = (payload: Payload) => void | Promise<void>;
-type EventBusOptions<Events extends { [K in keyof Events]: unknown }> = {
-  onError?: (args: {
-    event: keyof Events;
-    payload: Events[keyof Events];
-    error: unknown;
-  }) => void | Promise<void>;
-  concurrency?: 'sequential' | 'parallel';
-  throwOnError?: boolean;
-};
-type EmitOptions = {
-  throwOnError?: boolean;
-  failFast?: boolean;
-};
-declare class EventBus<Events extends { [K in keyof Events]: unknown }> {
-  private readonly options;
-  private listeners;
-  constructor(options?: EventBusOptions<Events>);
-  on<E extends keyof Events>(event: E, handler: EventHandler<Events[E]>): () => void;
-  once<E extends keyof Events>(event: E, handler: EventHandler<Events[E]>): () => void;
-  off<E extends keyof Events>(event: E, handler: EventHandler<Events[E]>): void;
-  emit<E extends keyof Events>(event: E, payload: Events[E], options?: EmitOptions): Promise<void>;
-}
-//#endregion
-//#region models/Mint.d.ts
-interface Mint {
-  mintUrl: string;
-  name: string;
-  mintInfo: MintInfo;
-  trusted: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-//#endregion
-//#region models/Keyset.d.ts
-type KeysetKeypairs = Record<string, string>;
-interface Keyset {
-  mintUrl: string;
-  id: string;
-  unit: string;
-  keypairs: KeysetKeypairs;
-  active: boolean;
-  feePpk: number;
-  updatedAt: number;
 }
 //#endregion
 //#region infra/MintRequestProvider.d.ts
@@ -228,6 +162,192 @@ declare class MintRequestProvider {
   clearAll(): void;
 }
 //#endregion
+//#region models/Keyset.d.ts
+type KeysetKeypairs = Record<string, string>;
+interface Keyset {
+  mintUrl: string;
+  id: string;
+  unit: string;
+  keypairs: KeysetKeypairs;
+  active: boolean;
+  feePpk: number;
+  updatedAt: number;
+}
+//#endregion
+//#region models/MintQuoteState.d.ts
+type MintQuoteState = 'UNPAID' | 'PAID' | 'ISSUED';
+//#endregion
+//#region utils.d.ts
+/**
+ * Stored form of a BlindedMessage (JSON-safe)
+ */
+interface StoredBlindedMessage {
+  amount: string | number;
+  id: string;
+  B_: string;
+}
+/**
+ * Serialized form of a single OutputData entry (JSON-safe)
+ */
+interface SerializedOutput {
+  blindedMessage: StoredBlindedMessage;
+  blindingFactor: string;
+  secret: string;
+}
+/**
+ * Serialized form of OutputData for keep and send (JSON-safe)
+ */
+interface SerializedOutputData {
+  keep: SerializedOutput[];
+  send: SerializedOutput[];
+}
+//#endregion
+//#region models/Counter.d.ts
+interface Counter {
+  mintUrl: string;
+  keysetId: string;
+  counter: number;
+}
+//#endregion
+//#region events/EventBus.d.ts
+type EventHandler<Payload> = (payload: Payload) => void | Promise<void>;
+type EventBusOptions<Events extends { [K in keyof Events]: unknown }> = {
+  onError?: (args: {
+    event: keyof Events;
+    payload: Events[keyof Events];
+    error: unknown;
+  }) => void | Promise<void>;
+  concurrency?: 'sequential' | 'parallel';
+  throwOnError?: boolean;
+};
+type EmitOptions = {
+  throwOnError?: boolean;
+  failFast?: boolean;
+};
+declare class EventBus<Events extends { [K in keyof Events]: unknown }> {
+  private readonly options;
+  private listeners;
+  constructor(options?: EventBusOptions<Events>);
+  on<E extends keyof Events>(event: E, handler: EventHandler<Events[E]>): () => void;
+  once<E extends keyof Events>(event: E, handler: EventHandler<Events[E]>): () => void;
+  off<E extends keyof Events>(event: E, handler: EventHandler<Events[E]>): void;
+  emit<E extends keyof Events>(event: E, payload: Events[E], options?: EmitOptions): Promise<void>;
+}
+//#endregion
+//#region models/Mint.d.ts
+interface Mint$1 {
+  mintUrl: string;
+  name: string;
+  mintInfo: MintInfo;
+  trusted: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+//#endregion
+//#region amounts.d.ts
+interface UnitAmount {
+  amount: Amount;
+  unit: string;
+}
+type UnitAmountLike = AmountLike | {
+  amount: AmountLike;
+  unit: string;
+};
+//#endregion
+//#region services/MintService.d.ts
+interface MethodUnitCapability {
+  supported: boolean;
+  disabled: boolean;
+  nut: 4 | 5;
+  method: string;
+  unit: string;
+  minAmount?: Amount | null;
+  maxAmount?: Amount | null;
+  options?: unknown;
+  legacySatAllowed?: boolean;
+  reason?: string;
+}
+/** Operation side for Payment Method Capability discovery. */
+type PaymentMethodCapabilityOperationKind = 'mint' | 'melt';
+/** Input for checking whether one method/unit pair is supported by mint metadata. */
+interface CheckPaymentMethodCapabilityInput {
+  mintUrl: string;
+  operation: PaymentMethodCapabilityOperationKind;
+  method: string;
+  unit: string;
+}
+/** Input for listing actionable Payment Method Capabilities advertised by a mint. */
+interface ListPaymentMethodCapabilitiesInput {
+  mintUrl: string;
+  operation?: PaymentMethodCapabilityOperationKind;
+  unit?: string;
+}
+/** Actionable Payment Method Capability advertised through enabled NUT-04/NUT-05 metadata. */
+interface PaymentMethodCapability {
+  operation: PaymentMethodCapabilityOperationKind;
+  nut: 4 | 5;
+  method: string;
+  unit: string;
+  minAmount?: Amount | null;
+  maxAmount?: Amount | null;
+  options?: unknown;
+}
+/** Result for a single Payment Method Capability check, including unsupported reasons. */
+interface PaymentMethodCapabilityCheck extends PaymentMethodCapability {
+  supported: boolean;
+  disabled: boolean;
+  reason?: string;
+}
+declare class MintService {
+  private readonly mintRepo;
+  private readonly keysetRepo;
+  private readonly mintAdapter;
+  private readonly eventBus?;
+  private readonly logger?;
+  constructor(mintRepo: MintRepository, keysetRepo: KeysetRepository, mintAdapter: MintAdapter, logger?: Logger, eventBus?: EventBus<CoreEvents>);
+  /**
+   * Add a new mint by URL, running a single update cycle to fetch info & keysets.
+   * If the mint already exists, it ensures it is updated.
+   * New mints are added as untrusted by default unless explicitly specified.
+   *
+   * @param mintUrl - The URL of the mint to add
+   * @param options - Optional configuration
+   * @param options.trusted - Whether to add the mint as trusted (default: false)
+   */
+  addMintByUrl(mintUrl: string, options?: {
+    trusted?: boolean;
+  }): Promise<{
+    mint: Mint$1;
+    keysets: Keyset[];
+  }>;
+  updateMintData(mintUrl: string): Promise<{
+    mint: Mint$1;
+    keysets: Keyset[];
+  }>;
+  isTrustedMint(mintUrl: string): Promise<boolean>;
+  ensureUpdatedMint(mintUrl: string): Promise<{
+    mint: Mint$1;
+    keysets: Keyset[];
+  }>;
+  deleteMint(mintUrl: string): Promise<void>;
+  getMintInfo(mintUrl: string): Promise<MintInfo>;
+  checkPaymentMethodCapability(input: CheckPaymentMethodCapabilityInput): Promise<PaymentMethodCapabilityCheck>;
+  getMintMethodUnitCapability(mintUrl: string, nut: 4 | 5, method: string, unit: string): Promise<MethodUnitCapability>;
+  listPaymentMethodCapabilities(input: ListPaymentMethodCapabilitiesInput): Promise<PaymentMethodCapability[]>;
+  assertMethodUnitSupported(mintUrl: string, nut: 4 | 5, method: string, scope: string | UnitAmount): Promise<void>;
+  getAllMints(): Promise<Mint$1[]>;
+  getAllTrustedMints(): Promise<Mint$1[]>;
+  trustMint(mintUrl: string): Promise<void>;
+  untrustMint(mintUrl: string): Promise<void>;
+  private getNutMethodSettings;
+  private assertMethodCapabilityNut;
+  private formatNut;
+  private assertPaymentMethodCapabilityOperation;
+  private nutForPaymentMethodCapabilityOperation;
+  private parseOptionalAmount;
+  private updateMint;
+}
+//#endregion
 //#region services/SeedService.d.ts
 declare class SeedService {
   private readonly seedGetter;
@@ -278,519 +398,6 @@ declare class WalletService {
   private buildWallet;
 }
 //#endregion
-//#region amounts.d.ts
-declare const DEFAULT_UNIT = "sat";
-interface UnitAmount {
-  amount: Amount$1;
-  unit: string;
-}
-type UnitAmountLike = AmountLike$1 | {
-  amount: AmountLike$1;
-  unit: string;
-};
-declare function isUnitAmountLikeObject(input: UnitAmountLike): input is {
-  amount: AmountLike$1;
-  unit: string;
-};
-declare function normalizeUnit(unit?: string, options?: {
-  defaultUnit?: string;
-}): string;
-declare function normalizeUnitList(units?: readonly string[]): string[] | undefined;
-declare function assertSameUnit(actual: string, expected: string, context?: string): void;
-/**
- * Parse ergonomic public-boundary amount input into canonical `UnitAmount`.
- *
- * Use this at API and hook boundaries only. Internal services, operations, and
- * handlers should accept `UnitAmount` directly so amount+unit cannot be split or
- * accidentally defaulted.
- */
-declare function parseUnitAmount(input: UnitAmountLike, options?: {
-  defaultUnit?: string;
-  explicitUnit?: string;
-}): UnitAmount;
-/**
- * Normalize an already-coupled amount/unit value for internal service use.
- *
- * `parseUnitAmount()` is the public-boundary parser for ergonomic inputs. Internal
- * service and operation layers should accept `UnitAmount` and use this helper only
- * to canonicalize the `Amount` instance and lower-case the unit.
- */
-declare function normalizeUnitAmount(value: UnitAmount): UnitAmount;
-declare function assertUnitAmount(value: UnitAmount, context?: string): UnitAmount;
-declare function sameUnitAmount(amount: UnitAmount, expectedUnit: string, context?: string): UnitAmount;
-//#endregion
-//#region operations/mint/MintOperation.d.ts
-/**
- * State machine for mint operations:
- *
- * init -> pending -> executing -> finalized
- *          ^         |
- *          +---------+-> failed
- *
- * - init: Quote-bound local mint intent persisted before prepare has attached output data
- * - pending: Deterministic outputData persisted; quote may now settle remotely
- * - executing: Mint or recovery call in progress
- * - finalized: Quote reached terminal ISSUED state; proofs were saved when recoverable
- * - failed: Operation reached a terminal non-issued state (for example, quote expiry)
- */
-type MintOperationState = 'init' | 'pending' | 'executing' | 'finalized' | 'failed';
-interface MintOperationBase<M extends MintMethod = MintMethod> extends MintMethodMeta<M> {
-  id: string;
-  mintUrl: string;
-  createdAt: number;
-  updatedAt: number;
-  error?: string;
-  terminalFailure?: MintOperationFailure;
-}
-interface MintOperationFailure {
-  reason: string;
-  code?: string;
-  retryable?: boolean;
-  observedAt: number;
-}
-interface MintIntentData {
-  amount: Amount$1;
-  unit: string;
-}
-interface MintQuoteSnapshot {
-  quoteId: string;
-  request: string;
-  expiry: number | null;
-  pubkey?: string;
-}
-interface PendingData {
-  outputData: SerializedOutputData;
-}
-interface InitMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData {
-  state: 'init';
-  quoteId: string;
-}
-interface PendingMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
-  state: 'pending';
-}
-interface ExecutingMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
-  state: 'executing';
-}
-interface FinalizedMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
-  state: 'finalized';
-}
-interface FailedMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
-  state: 'failed';
-}
-type MintOperation<M extends MintMethod = MintMethod> = InitMintOperation<M> | PendingMintOperation<M> | ExecutingMintOperation<M> | FinalizedMintOperation<M> | FailedMintOperation<M>;
-type PendingOrLaterOperation<M extends MintMethod = MintMethod> = PendingMintOperation<M> | ExecutingMintOperation<M> | FinalizedMintOperation<M> | FailedMintOperation<M>;
-type TerminalMintOperation<M extends MintMethod = MintMethod> = FinalizedMintOperation<M> | FailedMintOperation<M>;
-//#endregion
-//#region models/MintQuote.d.ts
-type MintQuoteOnchainResponse = MintMethodQuoteSnapshot<'onchain'>;
-interface MintQuoteBase<M extends MintMethod> {
-  mintUrl: string;
-  method: M;
-  quoteId: string;
-  /**
-   * Compatibility alias for cashu-ts quote snapshots.
-   * New code should use quoteId for local/remote identity clarity.
-   */
-  quote: string;
-  request: string;
-  unit: string;
-  expiry: number | null;
-  pubkey?: string;
-  reusable: boolean;
-  quoteData: MintMethodQuoteData<M>;
-  createdAt: number;
-  updatedAt: number;
-}
-type Bolt11MintQuote = MintQuoteBase<'bolt11'> & {
-  amount: Amount$1;
-  state: MintMethodRemoteState<'bolt11'>;
-  lastObservedRemoteState?: MintMethodRemoteState<'bolt11'>;
-  lastObservedRemoteStateAt?: number;
-  reusable: false;
-};
-type OnchainMintQuote = MintQuoteBase<'onchain'> & {
-  amount?: never;
-  state?: never;
-  lastObservedRemoteState?: never;
-  lastObservedRemoteStateAt?: number;
-  reusable: true;
-};
-type Bolt12MintQuote = MintQuoteBase<'bolt12'> & {
-  amount?: Amount$1;
-  state?: never;
-  lastObservedRemoteState?: never;
-  lastObservedRemoteStateAt?: number;
-  reusable: true;
-};
-type MintQuote<M extends MintMethod = MintMethod> = M extends 'bolt11' ? Bolt11MintQuote : M extends 'onchain' ? OnchainMintQuote : M extends 'bolt12' ? Bolt12MintQuote : never;
-declare function isStatefulMintQuote(quote: MintQuote): quote is MintQuote<'bolt11'>;
-declare function getMintQuoteRemoteState(quote: MintQuote): MintMethodRemoteState<'bolt11'> | undefined;
-/**
- * Returns the fixed mint operation amount for stateful quotes.
- *
- * Reusable quote metadata may include a payment amount, such as a fixed BOLT12
- * offer amount, but that does not constrain the later mint operation amount.
- */
-declare function getMintQuoteAmount(quote: MintQuote): Amount$1 | undefined;
-declare function getMintQuoteAvailableAmount(quote: MintQuote): Amount$1;
-declare function isMintQuotePending(quote: MintQuote): boolean;
-declare function mintQuoteFromBolt11Response(mintUrl: string, quote: MintQuoteBolt11Response, options?: {
-  now?: number;
-}): MintQuote<'bolt11'>;
-declare function mintQuoteFromOnchainResponse(mintUrl: string, quote: MintQuoteOnchainResponse, options?: {
-  now?: number;
-}): MintQuote<'onchain'>;
-declare function mintQuoteFromBolt12Response(mintUrl: string, quote: MintQuoteBolt12Response, options?: {
-  now?: number;
-}): MintQuote<'bolt12'>;
-declare function mintQuoteToMethodSnapshot<M extends MintMethod>(quote: MintQuote<M>): MintMethodQuoteSnapshot<M>;
-//#endregion
-//#region operations/mint/MintMethodHandler.d.ts
-/**
- * Registry of supported mint methods and payload shapes.
- * Extend via declaration merging to support additional methods.
- */
-interface MintMethodDefinitions {
-  bolt11: {
-    methodData: Record<string, never>;
-    createQuoteData: {
-      amount: UnitAmount;
-    };
-    quoteData: {
-      amount: Amount$1;
-    };
-    remoteState: 'UNPAID' | 'PAID' | 'ISSUED';
-    quote: MintQuoteBolt11Response;
-  };
-  onchain: {
-    methodData: Record<string, never>;
-    createQuoteData: {
-      unit: string;
-    };
-    quoteData: {
-      pubkey: string;
-      amountPaid: Amount$1;
-      amountIssued: Amount$1;
-    };
-    remoteState: never;
-    quote: MintQuoteOnchainResponse$1;
-  };
-  bolt12: {
-    methodData: Record<string, never>;
-    createQuoteData: {
-      unit: string;
-      amount?: UnitAmount;
-      description?: string;
-    };
-    quoteData: {
-      pubkey: string;
-      amount?: Amount$1;
-      amountPaid: Amount$1;
-      amountIssued: Amount$1;
-    };
-    remoteState: never;
-    quote: MintQuoteBolt12Response;
-  };
-}
-type MintMethod = keyof MintMethodDefinitions;
-type MintMethodData<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['methodData'];
-type MintMethodCreateQuoteData<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['createQuoteData'];
-type MintMethodQuoteData<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['quoteData'];
-type MintMethodRemoteState<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['remoteState'];
-type MintMethodQuoteSnapshot<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['quote'];
-interface MintMethodMeta<M extends MintMethod = MintMethod> {
-  method: M;
-  methodData: MintMethodData<M>;
-}
-interface BaseHandlerDeps$2 {
-  proofRepository: ProofRepository;
-  proofService: ProofService;
-  walletService: WalletService;
-  mintService: MintService;
-  mintAdapter: MintAdapter;
-  eventBus: EventBus<CoreEvents>;
-  logger?: Logger;
-}
-interface CreateMintQuoteContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps$2 {
-  mintUrl: string;
-  createQuoteData: MintMethodCreateQuoteData<M>;
-  wallet: Wallet;
-}
-interface FetchRemoteMintQuoteContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps$2 {
-  quote: MintQuote<M>;
-}
-interface PrepareContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps$2 {
-  operation: InitMintOperation<M>;
-  wallet: Wallet;
-  importedQuote?: MintMethodQuoteSnapshot<M>;
-}
-interface ExecuteContext$2<M extends MintMethod = MintMethod> extends BaseHandlerDeps$2 {
-  operation: ExecutingMintOperation<M>;
-  wallet: Wallet;
-}
-interface RecoverExecutingContext$2<M extends MintMethod = MintMethod> extends BaseHandlerDeps$2 {
-  operation: ExecutingMintOperation<M>;
-  wallet: Wallet;
-}
-interface PendingContext$2<M extends MintMethod = MintMethod> extends BaseHandlerDeps$2 {
-  operation: PendingMintOperation<M>;
-  wallet: Wallet;
-}
-type MintExecutionResult = {
-  status: 'ISSUED';
-  proofs: Proof[];
-} | {
-  status: 'ALREADY_ISSUED';
-} | {
-  status: 'FAILED';
-  error?: string;
-};
-type RecoverExecutingResult = {
-  status: 'FINALIZED';
-} | {
-  status: 'TERMINAL';
-  error: string;
-} | {
-  status: 'PENDING';
-  error?: string;
-};
-type PendingMintCheckCategory = 'waiting' | 'ready' | 'completed' | 'terminal';
-interface PendingMintCheckResult<M extends MintMethod = MintMethod> {
-  observedRemoteState?: MintMethodRemoteState<M>;
-  observedRemoteStateAt: number;
-  quoteSnapshot?: MintMethodQuoteSnapshot<M>;
-  category: PendingMintCheckCategory;
-  terminalFailure?: MintOperationFailure;
-}
-interface MintMethodHandler<M extends MintMethod = MintMethod> {
-  createQuote(ctx: CreateMintQuoteContext<M>): Promise<MintQuote<M>>;
-  fetchRemoteQuote(ctx: FetchRemoteMintQuoteContext<M>): Promise<MintQuote<M>>;
-  validateQuoteForPrepare?(quote: MintQuote<M>): Promise<void> | void;
-  prepare(ctx: PrepareContext<M>): Promise<PendingMintOperation<M>>;
-  execute(ctx: ExecuteContext$2<M>): Promise<MintExecutionResult>;
-  recoverExecuting(ctx: RecoverExecutingContext$2<M>): Promise<RecoverExecutingResult>;
-  checkPending(ctx: PendingContext$2<M>): Promise<PendingMintCheckResult<M>>;
-}
-type MintMethodHandlerRegistry = { [M in MintMethod]: MintMethodHandler<M> };
-//#endregion
-//#region infra/MintAdapter.d.ts
-/**
- * Adapter for making HTTP requests to Cashu mints.
- *
- * All requests are rate-limited through the MintRequestProvider,
- * sharing the same rate limits with other components (e.g., WalletService).
- */
-declare class MintAdapter {
-  private cashuMints;
-  private readonly requestProvider;
-  private readonly authProviders;
-  constructor(requestProvider: MintRequestProvider);
-  /** Register an AuthProvider for a mint (NUT-21/22). Invalidates the cached Mint instance. */
-  setAuthProvider(mintUrl: string, provider: AuthProvider): void;
-  /** Get the AuthProvider for a mint (if registered). */
-  getAuthProvider(mintUrl: string): AuthProvider | undefined;
-  /** Remove the AuthProvider for a mint. Invalidates the cached Mint instance. */
-  clearAuthProvider(mintUrl: string): void;
-  fetchMintInfo(mintUrl: string): Promise<MintInfo>;
-  fetchKeysets(mintUrl: string): Promise<GetKeysetsResponse>;
-  fetchKeysForId(mintUrl: string, id: string): Promise<KeysetKeypairs>;
-  private getCashuMint;
-  checkMintQuote<M extends MintMethod>(mintUrl: string, method: M, quoteId: string): Promise<MintMethodQuoteSnapshot<M>>;
-  checkMeltQuote(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt11Response>;
-  checkMeltQuoteBolt12(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt12Response>;
-  checkMeltQuoteOnchain(mintUrl: string, quoteId: string): Promise<MeltQuoteOnchainResponse>;
-  checkMeltQuoteState(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt11Response['state']>;
-  checkMeltQuoteBolt12State(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt12Response['state']>;
-  checkMeltQuoteOnchainState(mintUrl: string, quoteId: string): Promise<MeltQuoteOnchainResponse['state']>;
-  checkProofStates(mintUrl: string, Ys: string[]): Promise<_cashu_cashu_ts0.ProofState[]>;
-  customMeltBolt11(mintUrl: string, proofsToSend: Proof[], changeOutputs: OutputData[], quoteId: string): Promise<MeltQuoteBolt11Response>;
-  customMeltBolt12(mintUrl: string, proofsToSend: Proof[], changeOutputs: OutputData[], quoteId: string): Promise<MeltQuoteBolt12Response>;
-  customMeltOnchain(mintUrl: string, proofsToSend: Proof[], changeOutputs: OutputData[], quoteId: string, feeIndex: number): Promise<MeltQuoteOnchainResponse>;
-}
-//#endregion
-//#region services/MintService.d.ts
-interface MethodUnitCapability {
-  supported: boolean;
-  disabled: boolean;
-  nut: 4 | 5;
-  method: string;
-  unit: string;
-  minAmount?: Amount$1 | null;
-  maxAmount?: Amount$1 | null;
-  options?: unknown;
-  legacySatAllowed?: boolean;
-  reason?: string;
-}
-/** Operation side for Payment Method Capability discovery. */
-type PaymentMethodCapabilityOperationKind = 'mint' | 'melt';
-/** Input for checking whether one method/unit pair is supported by mint metadata. */
-interface CheckPaymentMethodCapabilityInput {
-  mintUrl: string;
-  operation: PaymentMethodCapabilityOperationKind;
-  method: string;
-  unit: string;
-}
-/** Input for listing actionable Payment Method Capabilities advertised by a mint. */
-interface ListPaymentMethodCapabilitiesInput {
-  mintUrl: string;
-  operation?: PaymentMethodCapabilityOperationKind;
-  unit?: string;
-}
-/** Actionable Payment Method Capability advertised through enabled NUT-04/NUT-05 metadata. */
-interface PaymentMethodCapability {
-  operation: PaymentMethodCapabilityOperationKind;
-  nut: 4 | 5;
-  method: string;
-  unit: string;
-  minAmount?: Amount$1 | null;
-  maxAmount?: Amount$1 | null;
-  options?: unknown;
-}
-/** Result for a single Payment Method Capability check, including unsupported reasons. */
-interface PaymentMethodCapabilityCheck extends PaymentMethodCapability {
-  supported: boolean;
-  disabled: boolean;
-  reason?: string;
-}
-declare class MintService {
-  private readonly mintRepo;
-  private readonly keysetRepo;
-  private readonly mintAdapter;
-  private readonly eventBus?;
-  private readonly logger?;
-  constructor(mintRepo: MintRepository, keysetRepo: KeysetRepository, mintAdapter: MintAdapter, logger?: Logger, eventBus?: EventBus<CoreEvents>);
-  /**
-   * Add a new mint by URL, running a single update cycle to fetch info & keysets.
-   * If the mint already exists, it ensures it is updated.
-   * New mints are added as untrusted by default unless explicitly specified.
-   *
-   * @param mintUrl - The URL of the mint to add
-   * @param options - Optional configuration
-   * @param options.trusted - Whether to add the mint as trusted (default: false)
-   */
-  addMintByUrl(mintUrl: string, options?: {
-    trusted?: boolean;
-  }): Promise<{
-    mint: Mint;
-    keysets: Keyset[];
-  }>;
-  updateMintData(mintUrl: string): Promise<{
-    mint: Mint;
-    keysets: Keyset[];
-  }>;
-  isTrustedMint(mintUrl: string): Promise<boolean>;
-  ensureUpdatedMint(mintUrl: string): Promise<{
-    mint: Mint;
-    keysets: Keyset[];
-  }>;
-  deleteMint(mintUrl: string): Promise<void>;
-  getMintInfo(mintUrl: string): Promise<MintInfo>;
-  checkPaymentMethodCapability(input: CheckPaymentMethodCapabilityInput): Promise<PaymentMethodCapabilityCheck>;
-  getMintMethodUnitCapability(mintUrl: string, nut: 4 | 5, method: string, unit: string): Promise<MethodUnitCapability>;
-  listPaymentMethodCapabilities(input: ListPaymentMethodCapabilitiesInput): Promise<PaymentMethodCapability[]>;
-  assertMethodUnitSupported(mintUrl: string, nut: 4 | 5, method: string, scope: string | UnitAmount): Promise<void>;
-  getAllMints(): Promise<Mint[]>;
-  getAllTrustedMints(): Promise<Mint[]>;
-  trustMint(mintUrl: string): Promise<void>;
-  untrustMint(mintUrl: string): Promise<void>;
-  private getNutMethodSettings;
-  private assertMethodCapabilityNut;
-  private formatNut;
-  private assertPaymentMethodCapabilityOperation;
-  private nutForPaymentMethodCapabilityOperation;
-  private parseOptionalAmount;
-  private updateMint;
-}
-//#endregion
-//#region infra/WsConnectionManager.d.ts
-interface WebSocketLike {
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-  addEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (event: any) => void): void;
-  removeEventListener(type: 'open' | 'message' | 'error' | 'close', listener: (event: any) => void): void;
-}
-type WebSocketFactory = (url: string) => WebSocketLike;
-//#endregion
-//#region infra/SubscriptionProtocol.d.ts
-type JsonRpcId = number;
-type WsRequestMethod = 'subscribe' | 'unsubscribe';
-type SubscriptionKind = 'bolt11_mint_quote' | 'onchain_mint_quote' | 'bolt12_mint_quote' | 'bolt11_melt_quote' | 'bolt12_melt_quote' | 'onchain_melt_quote' | 'proof_state';
-type UnsubscribeHandler = () => Promise<void>;
-interface SubscribeParams {
-  kind: SubscriptionKind;
-  subId: string;
-  filters: string[];
-}
-interface UnsubscribeParams {
-  subId: string;
-}
-type WsRequest = {
-  jsonrpc: '2.0';
-  method: WsRequestMethod;
-  params: SubscribeParams | UnsubscribeParams;
-  id: JsonRpcId;
-};
-//#endregion
-//#region infra/RealTimeTransport.d.ts
-type TransportEvent = 'open' | 'message' | 'close' | 'error';
-interface RealTimeTransport {
-  on(mintUrl: string, event: TransportEvent, handler: (evt: any) => void): void;
-  send(mintUrl: string, req: WsRequest): void;
-  closeAll(): void;
-  closeMint(mintUrl: string): void;
-  pause(): void;
-  resume(): void;
-}
-//#endregion
-//#region infra/SubscriptionManager.d.ts
-type SubscriptionCallback<TPayload = unknown> = (payload: TPayload) => void | Promise<void>;
-interface SubscriptionManagerOptions {
-  /** Slow polling interval while WS is connected (default: 20000ms) */
-  slowPollingIntervalMs?: number;
-  /** Fast polling interval after WS fails (default: 5000ms) */
-  fastPollingIntervalMs?: number;
-}
-declare class SubscriptionManager {
-  private readonly nextIdByMint;
-  private readonly subscriptions;
-  private readonly activeByMint;
-  private readonly pendingSubscribeByMint;
-  private readonly transportByMint;
-  private readonly logger?;
-  private readonly messageHandlerByMint;
-  private readonly openHandlerByMint;
-  private readonly hasOpenedByMint;
-  private readonly wsFactory?;
-  private readonly mintAdapter;
-  private readonly options;
-  private paused;
-  constructor(wsFactoryOrManager: WebSocketFactory | RealTimeTransport, mintAdapter: MintAdapter, logger?: Logger, options?: SubscriptionManagerOptions);
-  /**
-   * Get or create a transport for a mint.
-   *
-   * Uses HybridTransport (WS + polling in parallel) when a wsFactory is available.
-   * HybridTransport handles WS failures gracefully by speeding up polling, so we
-   * don't need to check mint capabilities or WebSocket availability upfront.
-   *
-   * Falls back to pure PollingTransport only when no wsFactory is provided.
-   */
-  private getTransport;
-  private getNextId;
-  private ensureMessageListener;
-  subscribe<TPayload = unknown>(mintUrl: string, kind: SubscriptionKind, filters: string[], onNotification?: SubscriptionCallback<TPayload>): Promise<{
-    subId: string;
-    unsubscribe: UnsubscribeHandler;
-  }>;
-  addCallback<TPayload = unknown>(subId: string, cb: SubscriptionCallback<TPayload>): void;
-  removeCallback<TPayload = unknown>(subId: string, cb: SubscriptionCallback<TPayload>): void;
-  unsubscribe(mintUrl: string, subId: string): Promise<void>;
-  closeAll(): void;
-  closeMint(mintUrl: string): void;
-  private reSubscribeMint;
-  pause(): void;
-  resume(): void;
-}
-//#endregion
 //#region infra/handlers/melt/MeltHandlerProvider.d.ts
 /**
  * Runtime registry for melt method handlers.
@@ -818,7 +425,7 @@ interface MeltQuoteBase<M extends MeltMethod> {
    */
   quote: string;
   request: string;
-  amount: Amount$1;
+  amount: Amount;
   unit: string;
   expiry: number;
   state: MeltMethodRemoteState<M>;
@@ -829,7 +436,7 @@ interface MeltQuoteBase<M extends MeltMethod> {
   updatedAt: number;
 }
 interface BoltMeltQuote<M extends BoltMeltMethod = BoltMeltMethod> extends MeltQuoteBase<M> {
-  fee_reserve: Amount$1;
+  fee_reserve: Amount;
   payment_preimage?: string | null;
 }
 interface OnchainMeltQuote extends MeltQuoteBase<'onchain'> {
@@ -837,20 +444,6 @@ interface OnchainMeltQuote extends MeltQuoteBase<'onchain'> {
   outpoint?: string;
 }
 type MeltQuote<M extends MeltMethod = MeltMethod> = M extends 'onchain' ? OnchainMeltQuote : M extends BoltMeltMethod ? BoltMeltQuote<M> : never;
-declare function meltQuoteFromBolt11Response(mintUrl: string, quote: MeltQuoteBolt11Response, options?: {
-  now?: number;
-}): MeltQuote<'bolt11'>;
-declare function meltQuoteFromBolt12Response(mintUrl: string, quote: MeltQuoteBolt12Response, options?: {
-  now?: number;
-}): MeltQuote<'bolt12'>;
-declare function meltQuoteFromOnchainResponse(mintUrl: string, quote: MeltQuoteOnchainResponse, options?: {
-  now?: number;
-}): MeltQuote<'onchain'>;
-declare function meltQuoteToMethodSnapshot<M extends MeltMethod>(quote: MeltQuote<M>): MeltMethodQuoteSnapshot<M>;
-declare function resolveOnchainMeltFeeOption(quote: MeltQuote<'onchain'>, feeIndex?: number): {
-  feeIndex: number;
-  feeOption: MeltQuoteOnchainFeeOption;
-};
 //#endregion
 //#region operations/send/SendOperation.d.ts
 /**
@@ -880,7 +473,7 @@ interface SendOperationBase<M extends SendMethod = SendMethod> {
   /** The mint URL for this operation */
   mintUrl: string;
   /** The amount requested to send (before fees) */
-  amount: Amount$1;
+  amount: Amount;
   /** Unit for all amounts, proofs, outputs, and token data in this operation. */
   unit: string;
   /** The send method (e.g., 'default', 'p2pk') */
@@ -901,9 +494,9 @@ interface PreparedData$2 {
   /** Whether the operation requires a swap (false = exact match send) */
   needsSwap: boolean;
   /** Calculated fee for the swap (0 if exact match) */
-  fee: Amount$1;
+  fee: Amount;
   /** Total amount of input proofs selected */
-  inputAmount: Amount$1;
+  inputAmount: Amount;
   /** Secrets of proofs reserved as input for this operation */
   inputProofSecrets: string[];
   /**
@@ -978,11 +571,6 @@ type SendOperation = InitSendOperation | PreparedSendOperation | ExecutingSendOp
  * Any operation that has been prepared (has PreparedData)
  */
 type PreparedOrLaterOperation$1 = PreparedSendOperation | ExecutingSendOperation | PendingSendOperation | FinalizedSendOperation | RollingBackSendOperation | RolledBackSendOperation;
-/**
- * Terminal states - operation is finished
- * Note: 'rolling_back' is NOT terminal - it's a transient state that needs recovery
- */
-type TerminalSendOperation = FinalizedSendOperation | RolledBackSendOperation;
 interface CreateSendOperationOptions<M extends SendMethod = SendMethod> {
   method: M;
   methodData: SendMethodData<M>;
@@ -1004,7 +592,7 @@ interface SendMethodDefinitions {
 }
 type SendMethod = keyof SendMethodDefinitions;
 type SendMethodData<M extends SendMethod = SendMethod> = SendMethodDefinitions[M];
-interface BaseHandlerDeps$1 {
+interface BaseHandlerDeps$2 {
   proofRepository: ProofRepository;
   proofService: ProofService;
   walletService: WalletService;
@@ -1012,27 +600,27 @@ interface BaseHandlerDeps$1 {
   eventBus: EventBus<CoreEvents>;
   logger?: Logger;
 }
-interface BasePrepareContext$1 extends BaseHandlerDeps$1 {
+interface BasePrepareContext$1 extends BaseHandlerDeps$2 {
   operation: InitSendOperation;
   wallet: Wallet;
 }
-interface ExecuteContext$1 extends BaseHandlerDeps$1 {
+interface ExecuteContext$2 extends BaseHandlerDeps$2 {
   operation: ExecutingSendOperation;
   wallet: Wallet;
   reservedProofs: Proof[];
 }
-interface PendingContext$1 extends BaseHandlerDeps$1 {
+interface PendingContext$2 extends BaseHandlerDeps$2 {
   operation: PendingSendOperation;
   wallet: Wallet;
 }
-interface FinalizeContext$1 extends BaseHandlerDeps$1 {
+interface FinalizeContext$1 extends BaseHandlerDeps$2 {
   operation: PendingSendOperation;
 }
-interface RollbackContext$1 extends BaseHandlerDeps$1 {
+interface RollbackContext$1 extends BaseHandlerDeps$2 {
   operation: PreparedOrLaterOperation$1;
   wallet: Wallet;
 }
-interface RecoverExecutingContext$1 extends BaseHandlerDeps$1 {
+interface RecoverExecutingContext$2 extends BaseHandlerDeps$2 {
   operation: ExecutingSendOperation;
   wallet: Wallet;
 }
@@ -1063,15 +651,15 @@ type RecoveryResult = {
 type PendingCheckResult$1 = 'finalize' | 'stay_pending' | 'rollback';
 interface SendMethodHandler<M extends SendMethod = SendMethod> {
   prepare(ctx: BasePrepareContext$1): Promise<PreparedSendOperation>;
-  execute(ctx: ExecuteContext$1): Promise<ExecutionResult$1>;
+  execute(ctx: ExecuteContext$2): Promise<ExecutionResult$1>;
   finalize?(ctx: FinalizeContext$1): Promise<void>;
   rollback?(ctx: RollbackContext$1): Promise<void>;
-  checkPending?(ctx: PendingContext$1): Promise<PendingCheckResult$1>;
+  checkPending?(ctx: PendingContext$2): Promise<PendingCheckResult$1>;
   /**
    * Recover an executing operation that failed mid-execution.
    * Handlers must implement this method to handle recovery logic.
    */
-  recoverExecuting(ctx: RecoverExecutingContext$1): Promise<RecoveryResult>;
+  recoverExecuting(ctx: RecoverExecutingContext$2): Promise<RecoveryResult>;
 }
 type SendMethodHandlerRegistry = Record<SendMethod, SendMethodHandler<any>>;
 //#endregion
@@ -1103,6 +691,67 @@ declare class MintHandlerProvider {
   private set;
 }
 //#endregion
+//#region operations/mint/MintOperation.d.ts
+/**
+ * State machine for mint operations:
+ *
+ * init -> pending -> executing -> finalized
+ *          ^         |
+ *          +---------+-> failed
+ *
+ * - init: Quote-bound local mint intent persisted before prepare has attached output data
+ * - pending: Deterministic outputData persisted; quote may now settle remotely
+ * - executing: Mint or recovery call in progress
+ * - finalized: Quote reached terminal ISSUED state; proofs were saved when recoverable
+ * - failed: Operation reached a terminal non-issued state (for example, quote expiry)
+ */
+type MintOperationState = 'init' | 'pending' | 'executing' | 'finalized' | 'failed';
+interface MintOperationBase<M extends MintMethod = MintMethod> extends MintMethodMeta<M> {
+  id: string;
+  mintUrl: string;
+  createdAt: number;
+  updatedAt: number;
+  error?: string;
+  terminalFailure?: MintOperationFailure;
+}
+interface MintOperationFailure {
+  reason: string;
+  code?: string;
+  retryable?: boolean;
+  observedAt: number;
+}
+interface MintIntentData {
+  amount: Amount;
+  unit: string;
+}
+interface MintQuoteSnapshot {
+  quoteId: string;
+  request: string;
+  expiry: number | null;
+  pubkey?: string;
+}
+interface PendingData {
+  outputData: SerializedOutputData;
+}
+interface InitMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData {
+  state: 'init';
+  quoteId: string;
+}
+interface PendingMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
+  state: 'pending';
+}
+interface ExecutingMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
+  state: 'executing';
+}
+interface FinalizedMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
+  state: 'finalized';
+}
+interface FailedMintOperation<M extends MintMethod = MintMethod> extends MintOperationBase<M>, MintIntentData, MintQuoteSnapshot, PendingData {
+  state: 'failed';
+}
+type MintOperation<M extends MintMethod = MintMethod> = InitMintOperation<M> | PendingMintOperation<M> | ExecutingMintOperation<M> | FinalizedMintOperation<M> | FailedMintOperation<M>;
+type PendingOrLaterOperation<M extends MintMethod = MintMethod> = PendingMintOperation<M> | ExecutingMintOperation<M> | FinalizedMintOperation<M> | FailedMintOperation<M>;
+//#endregion
 //#region operations/MintScopedLock.d.ts
 /**
  * In-memory FIFO lock keyed by mint URL.
@@ -1114,6 +763,48 @@ declare class MintScopedLock {
   private readonly queues;
   acquire(mintUrl: string): Promise<() => void>;
 }
+//#endregion
+//#region models/MintQuote.d.ts
+interface MintQuoteBase<M extends MintMethod> {
+  mintUrl: string;
+  method: M;
+  quoteId: string;
+  /**
+   * Compatibility alias for cashu-ts quote snapshots.
+   * New code should use quoteId for local/remote identity clarity.
+   */
+  quote: string;
+  request: string;
+  unit: string;
+  expiry: number | null;
+  pubkey?: string;
+  reusable: boolean;
+  quoteData: MintMethodQuoteData<M>;
+  createdAt: number;
+  updatedAt: number;
+}
+type Bolt11MintQuote = MintQuoteBase<'bolt11'> & {
+  amount: Amount;
+  state: MintMethodRemoteState<'bolt11'>;
+  lastObservedRemoteState?: MintMethodRemoteState<'bolt11'>;
+  lastObservedRemoteStateAt?: number;
+  reusable: false;
+};
+type OnchainMintQuote = MintQuoteBase<'onchain'> & {
+  amount?: never;
+  state?: never;
+  lastObservedRemoteState?: never;
+  lastObservedRemoteStateAt?: number;
+  reusable: true;
+};
+type Bolt12MintQuote = MintQuoteBase<'bolt12'> & {
+  amount?: Amount;
+  state?: never;
+  lastObservedRemoteState?: never;
+  lastObservedRemoteStateAt?: number;
+  reusable: true;
+};
+type MintQuote<M extends MintMethod = MintMethod> = M extends 'bolt11' ? Bolt11MintQuote : M extends 'onchain' ? OnchainMintQuote : M extends 'bolt12' ? Bolt12MintQuote : never;
 //#endregion
 //#region models/QuoteIdentity.d.ts
 /**
@@ -1238,7 +929,7 @@ declare class MintOperationService {
   isRecoveryInProgress(): boolean;
   private createInitOperation;
   private resolveMintQuoteForOperationCreation;
-  prepare(quoteRef: MintQuoteRef, requestedAmount: Amount$1): Promise<PendingMintOperation>;
+  prepare(quoteRef: MintQuoteRef, requestedAmount: Amount): Promise<PendingMintOperation>;
   private prepareInitOperation;
   execute(operationId: string): Promise<MintOperation>;
   private executeReadyOperation;
@@ -1274,102 +965,6 @@ declare class MintOperationService {
   private hasSavedOutputs;
 }
 //#endregion
-//#region logging/ConsoleLogger.d.ts
-type ConsoleLoggerOptions = {
-  level?: LogLevel;
-};
-declare class ConsoleLogger implements Logger {
-  private prefix;
-  private level;
-  private static readonly levelPriority;
-  constructor(prefix?: string, options?: ConsoleLoggerOptions);
-  private shouldLog;
-  error(message: string, ...meta: unknown[]): void;
-  warn(message: string, ...meta: unknown[]): void;
-  info(message: string, ...meta: unknown[]): void;
-  debug(message: string, ...meta: unknown[]): void;
-  log(level: LogLevel, message: string, ...meta: unknown[]): void;
-  child(bindings: Record<string, unknown>): Logger;
-}
-//#endregion
-//#region models/Error.d.ts
-declare class UnknownMintError extends Error {
-  constructor(message: string);
-}
-declare class MintFetchError extends Error {
-  readonly mintUrl: string;
-  constructor(mintUrl: string, message?: string, cause?: unknown);
-}
-declare class KeysetSyncError extends Error {
-  readonly mintUrl: string;
-  readonly keysetId: string;
-  constructor(mintUrl: string, keysetId: string, message?: string, cause?: unknown);
-}
-declare class ProofValidationError extends Error {
-  constructor(message: string);
-}
-declare class UnitValidationError extends Error {
-  constructor(message: string);
-}
-declare class UnitMismatchError extends UnitValidationError {
-  constructor(message: string);
-}
-declare class TokenValidationError extends Error {
-  constructor(message: string, cause?: unknown);
-}
-declare class ProofOperationError extends Error {
-  readonly mintUrl: string;
-  readonly keysetId?: string;
-  constructor(mintUrl: string, message?: string, keysetId?: string, cause?: unknown);
-}
-/**
- * This error is thrown when a HTTP response is not 2XX nor a protocol error.
- */
-declare class HttpResponseError extends Error {
-  status: number;
-  constructor(message: string, status: number);
-}
-/**
- * This error is thrown when a network request fails.
- */
-declare class NetworkError extends Error {
-  constructor(message: string);
-}
-/**
- * This error is thrown when a protocol error occurs per Cashu NUT-00 error codes.
- */
-declare class MintOperationError extends HttpResponseError {
-  code: number;
-  constructor(code: number, detail: string);
-}
-/**
- * This error is thrown when a payment request is invalid or cannot be processed.
- */
-declare class PaymentRequestError extends Error {
-  constructor(message: string, cause?: unknown);
-}
-/**
- * This error is thrown when attempting to modify an operation that is already in progress.
- */
-declare class OperationInProgressError extends Error {
-  readonly operationId: string;
-  constructor(operationId: string);
-}
-declare class AuthSessionError extends Error {
-  readonly mintUrl: string;
-  constructor(mintUrl: string, message?: string, cause?: unknown);
-}
-declare class AuthSessionExpiredError extends AuthSessionError {
-  constructor(mintUrl: string);
-}
-declare class QuoteIdentityConflictError extends Error {
-  readonly kind: 'mint' | 'melt';
-  readonly mintUrl: string;
-  readonly quoteId: string;
-  readonly methods: readonly string[];
-  constructor(kind: 'mint' | 'melt', mintUrl: string, quoteId: string, methods: readonly string[], message?: string);
-}
-//#endregion
 //#region models/Keypair.d.ts
 type KeypairPurpose = 'p2pk' | 'nut20_mint_quote';
 type Keypair = {
@@ -1378,114 +973,6 @@ type Keypair = {
   derivationIndex?: number;
   purpose?: KeypairPurpose;
 };
-//#endregion
-//#region services/AuthSessionService.d.ts
-declare class AuthSessionService {
-  private readonly repo;
-  private readonly eventBus;
-  private readonly logger?;
-  constructor(repo: AuthSessionRepository, eventBus: EventBus<CoreEvents>, logger?: Logger);
-  /** Get a valid (non-expired) session; throws if missing or expired. */
-  getValidSession(mintUrl: string): Promise<AuthSession>;
-  /** Save OIDC tokens as a session. */
-  saveSession(mintUrl: string, tokens: {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-    scope?: string;
-  }, batPool?: Proof[]): Promise<AuthSession>;
-  /** Update only the BAT pool of an existing session (no expiry recalculation, no event). */
-  updateBatPool(mintUrl: string, batPool?: Proof[]): Promise<void>;
-  /** Delete (logout) a session. */
-  deleteSession(mintUrl: string): Promise<void>;
-  /** Notify listeners that auth state changed (e.g. after restore) */
-  emitUpdated(mintUrl: string): Promise<void>;
-  /** Get session without expiry check; returns null if missing. */
-  getSession(mintUrl: string): Promise<AuthSession | null>;
-  /** Check whether a valid (non-expired) session exists for the given mint. */
-  hasSession(mintUrl: string): Promise<boolean>;
-}
-//#endregion
-//#region services/AuthService.d.ts
-/**
- * Core service for NUT-21/22 authentication.
- *
- * Orchestrates cashu-ts AuthManager (CAT/BAT lifecycle) and
- * AuthSessionService (token persistence) so callers only need
- * `mgr.auth.*` to authenticate with mints.
- */
-declare class AuthService {
-  private readonly authSessionService;
-  private readonly mintAdapter;
-  private readonly logger?;
-  /** Per-mint AuthManager (always present after login/restore). */
-  private readonly managers;
-  /** Per-mint PersistingProvider wrapper (returned by getAuthProvider). */
-  private readonly providers;
-  /** Per-mint OIDCAuth (present when refresh_token is available). */
-  private readonly oidcClients;
-  constructor(authSessionService: AuthSessionService, mintAdapter: MintAdapter, logger?: Logger | undefined);
-  /**
-   * Start an OIDC Device Code authorization flow for a mint.
-   *
-   * Returns the device-code fields (verification_uri, user_code, etc.)
-   * plus a `poll()` helper that resolves once the user authorizes.
-   * After `poll()` succeeds the session is persisted and the
-   * AuthProvider is wired into MintAdapter automatically.
-   */
-  startDeviceAuth(mintUrl: string): Promise<{
-    verification_uri: string;
-    verification_uri_complete: string | undefined;
-    user_code: string; /** Poll until the user authorizes; resolves with the OIDC tokens. */
-    poll: () => Promise<TokenResponse>; /** Cancel the pending device-code poll. */
-    cancel: () => void;
-  }>;
-  /**
-   * Save OIDC tokens as an auth session and wire the AuthProvider.
-   *
-   * Use this when the caller already obtained tokens externally
-   * (e.g. via Authorization Code + PKCE or password grant).
-   */
-  login(mintUrl: string, tokens: {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-    scope?: string;
-  }): Promise<AuthSession>;
-  /**
-   * Restore a persisted auth session and wire the AuthProvider.
-   *
-   * Call this on app startup for each mint that has a stored session.
-   * Returns true if a session was found and restored.
-   *
-   * If the CAT is expired but a refreshToken exists, OIDC is attached
-   * so cashu-ts can automatically refresh the CAT on the next request.
-   */
-  restore(mintUrl: string): Promise<boolean>;
-  /** Delete the auth session and disconnect the AuthProvider. */
-  logout(mintUrl: string): Promise<void>;
-  /** Get a valid (non-expired) session; throws if missing or expired. */
-  getSession(mintUrl: string): Promise<AuthSession>;
-  /** Check whether a session exists for the given mint. */
-  hasSession(mintUrl: string): Promise<boolean>;
-  /** Get the AuthProvider for a mint, or undefined if not authenticated. */
-  getAuthProvider(mintUrl: string): AuthProvider | undefined;
-  /** Get the current BAT pool size for a mint, or 0 if not authenticated. */
-  getPoolSize(mintUrl: string): number;
-  /**
-   * Create an OIDCAuth instance from the mint's NUT-21 metadata,
-   * attach it to the AuthManager for automatic CAT refresh, and
-   * register the onTokens callback for persistence.
-   */
-  private attachOIDC;
-  /**
-   * Wrap an AuthManager so that every BAT consumption/topUp automatically
-   * persists the updated pool to the session store.
-   */
-  private createPersistingProvider;
-  private persistPool;
-  private saveSessionWithPool;
-}
 //#endregion
 //#region services/HistoryService.d.ts
 declare class HistoryService {
@@ -1720,7 +1207,7 @@ type ResolvedPaymentRequest = {
   paymentRequest: PaymentRequest;
   payableMints: string[];
   allowedMints: string[];
-  amount?: Amount$1;
+  amount?: Amount;
   unit: string;
   transport: PaymentRequestTransport$1;
 };
@@ -1809,7 +1296,7 @@ interface ReceiveOperationBase {
   /** Unit declared by the received token */
   unit: string;
   /** The amount received (sum of input proofs) */
-  amount: Amount$1;
+  amount: Amount;
   /** Proofs contained in the received token (prepared for receiving) */
   inputProofs: Proof[];
   /** Timestamp when the operation was created */
@@ -1826,7 +1313,7 @@ interface ReceiveOperationBase {
  */
 interface PreparedData$1 {
   /** Fees charged for the receive operation */
-  fee: Amount$1;
+  fee: Amount;
   /** Serialized OutputData for deterministic receive outputs */
   outputData: SerializedOutputData;
 }
@@ -1864,10 +1351,6 @@ interface RolledBackReceiveOperation extends ReceiveOperationBase, PreparedData$
  * Discriminated union of all receive operation states.
  */
 type ReceiveOperation = InitReceiveOperation | PreparedReceiveOperation | ExecutingReceiveOperation | FinalizedReceiveOperation | RolledBackReceiveOperation;
-/**
- * Terminal states - operation is finished
- */
-type TerminalReceiveOperation = FinalizedReceiveOperation | RolledBackReceiveOperation;
 //#endregion
 //#region services/TokenService.d.ts
 declare class TokenService {
@@ -2014,7 +1497,7 @@ interface PaymentRequestReceiveOperation {
   encodedRequest: string;
   state: PaymentRequestReceiveState;
   transport: PaymentRequestReceiveTransport;
-  amount: Amount$1;
+  amount: Amount;
   unit: string;
   mints: string[];
   singleUse: boolean;
@@ -2035,9 +1518,9 @@ interface PaymentRequestReceiveAttempt {
   memo?: string;
   mintUrl: string;
   unit: string;
-  grossAmount: Amount$1;
-  fee?: Amount$1;
-  netAmount?: Amount$1;
+  grossAmount: Amount;
+  fee?: Amount;
+  netAmount?: Amount;
   receiveOperationId?: string;
   state: PaymentRequestReceiveAttemptState;
   error?: string;
@@ -2045,18 +1528,11 @@ interface PaymentRequestReceiveAttempt {
   createdAt: number;
   updatedAt: number;
 }
-type ParsedPaymentRequestPayload = {
-  id?: string;
-  memo?: string;
-  mint: string;
-  unit: string;
-  proofs: Proof[];
-};
 //#endregion
 //#region infra/handlers/paymentRequestReceive/PaymentRequestReceiveTransportHandlerProvider.d.ts
 interface PaymentRequestReceiveTransportCreateInput {
   requestId: string;
-  amount: Amount$1;
+  amount: Amount;
   unit: string;
   mints: string[];
   description?: string;
@@ -2272,11 +1748,11 @@ declare class MeltOperationService {
 //#region events/types.d.ts
 interface CoreEvents {
   'mint:added': {
-    mint: Mint;
+    mint: Mint$1;
     keysets: Keyset[];
   };
   'mint:updated': {
-    mint: Mint;
+    mint: Mint$1;
     keysets: Keyset[];
   };
   'mint:trusted': {
@@ -2460,7 +1936,7 @@ declare class ProofService {
    * Calculates the send amount including receiver fees.
    * This is used when the sender pays fees for the receiver.
    */
-  calculateSendAmountWithFees(mintUrl: string, intent: UnitAmount): Promise<Amount$1>;
+  calculateSendAmountWithFees(mintUrl: string, intent: UnitAmount): Promise<Amount>;
   checkInflightProofs(): Promise<void>;
   createOutputsAndIncrementCounters(mintUrl: string, amount: {
     keep: UnitAmount;
@@ -2470,8 +1946,8 @@ declare class ProofService {
   }): Promise<{
     keep: OutputData[];
     send: OutputData[];
-    sendAmount: Amount$1;
-    keepAmount: Amount$1;
+    sendAmount: Amount;
+    keepAmount: Amount;
   }>;
   saveProofs(mintUrl: string, proofs: CoreProof[]): Promise<void>;
   getReadyProofs(mintUrl: string, filter?: ProofUnitFilter): Promise<CoreProof[]>;
@@ -2481,13 +1957,13 @@ declare class ProofService {
    * @param mintUrl - The URL of the mint
    * @returns The total balance for the mint
    */
-  getBalance(mintUrl: string): Promise<Amount$1>;
+  getBalance(mintUrl: string): Promise<Amount>;
   /**
    * Gets the spendable balance for a single mint.
    * @param mintUrl - The URL of the mint
    * @returns The spendable balance for the mint
    */
-  getSpendableBalance(mintUrl: string): Promise<Amount$1>;
+  getSpendableBalance(mintUrl: string): Promise<Amount>;
   /**
    * Gets the full balance breakdown for a single mint.
    * @param mintUrl - The URL of the mint
@@ -2499,14 +1975,14 @@ declare class ProofService {
    * @returns An object mapping mint URLs to their total balances
    */
   getBalances(): Promise<{
-    [mintUrl: string]: Amount$1;
+    [mintUrl: string]: Amount;
   }>;
   /**
    * Gets spendable balances for all mints.
    * @returns An object mapping mint URLs to their spendable balances
    */
   getSpendableBalances(): Promise<{
-    [mintUrl: string]: Amount$1;
+    [mintUrl: string]: Amount;
   }>;
   /**
    * Gets canonical balances for all mints with spendable, reserved, and total amounts.
@@ -2531,14 +2007,14 @@ declare class ProofService {
    * @returns An object mapping trusted mint URLs to their total balances
    */
   getTrustedBalances(): Promise<{
-    [mintUrl: string]: Amount$1;
+    [mintUrl: string]: Amount;
   }>;
   /**
    * Gets spendable balances for trusted mints only.
    * @returns An object mapping trusted mint URLs to their spendable balances
    */
   getTrustedSpendableBalances(): Promise<{
-    [mintUrl: string]: Amount$1;
+    [mintUrl: string]: Amount;
   }>;
   /**
    * Gets balance breakdowns for trusted mints only.
@@ -2632,15 +2108,15 @@ declare class ProofService {
 interface MeltMethodInputDefinitions {
   bolt11: {
     invoice: string;
-    amountSats?: AmountLike$1;
+    amountSats?: AmountLike;
   };
   bolt12: {
     offer: string;
-    amountSats?: AmountLike$1;
+    amountSats?: AmountLike;
   };
   onchain: {
     address: string;
-    amountSats: AmountLike$1;
+    amountSats: AmountLike;
   };
 }
 /**
@@ -2650,15 +2126,15 @@ interface MeltMethodInputDefinitions {
 interface MeltMethodDefinitions {
   bolt11: {
     invoice: string;
-    amountSats?: Amount$1;
+    amountSats?: Amount;
   };
   bolt12: {
     offer: string;
-    amountSats?: Amount$1;
+    amountSats?: Amount;
   };
   onchain: {
     address: string;
-    amountSats: Amount$1;
+    amountSats: Amount;
     feeIndex?: number;
   };
 }
@@ -2676,8 +2152,7 @@ interface MeltMethodMeta<M extends MeltMethod = MeltMethod> {
   method: M;
   methodData: MeltMethodData<M>;
 }
-declare function normalizeMeltMethodData<M extends MeltMethod>(methodData: MeltMethodInputData<M> | MeltMethodData<M>): MeltMethodData<M>;
-interface BaseHandlerDeps {
+interface BaseHandlerDeps$1 {
   proofRepository: ProofRepository;
   proofService: ProofService;
   walletService: WalletService;
@@ -2686,42 +2161,42 @@ interface BaseHandlerDeps {
   eventBus: EventBus<CoreEvents>;
   logger?: Logger;
 }
-interface CreateMeltQuoteContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface CreateMeltQuoteContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   mintUrl: string;
   methodData: MeltMethodData<M>;
   unit: string;
   wallet: Wallet;
 }
-interface FetchRemoteMeltQuoteContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface FetchRemoteMeltQuoteContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   quote: MeltQuote<M>;
 }
-interface BasePrepareContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface BasePrepareContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   operation: InitMeltOperation & MeltMethodMeta<M>;
   wallet: Wallet;
   quote: MeltMethodQuoteSnapshot<M>;
 }
-interface ExecuteContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface ExecuteContext$1<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   operation: ExecutingMeltOperation & MeltMethodMeta<M>;
   wallet: Wallet;
   reservedProofs: Proof[];
 }
-interface PendingContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface PendingContext$1<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   operation: PendingMeltOperation & MeltMethodMeta<M>;
   wallet: Wallet;
 }
-interface FinalizeContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface FinalizeContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   operation: PendingMeltOperation & MeltMethodMeta<M>;
 }
 type FinalizeResult<M extends MeltMethod = MeltMethod> = {
-  /** Total amount returned as change by the mint */changeAmount?: Amount$1; /** Actual fee impact after settlement */
-  effectiveFee?: Amount$1; /** Method-specific data that may be available once settlement completes */
+  /** Total amount returned as change by the mint */changeAmount?: Amount; /** Actual fee impact after settlement */
+  effectiveFee?: Amount; /** Method-specific data that may be available once settlement completes */
   finalizedData?: MeltMethodFinalizedData<M>;
 };
-interface RollbackContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface RollbackContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   operation: PreparedOrLaterOperation & MeltMethodMeta<M>;
   wallet: Wallet;
 }
-interface RecoverExecutingContext<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps {
+interface RecoverExecutingContext$1<M extends MeltMethod = MeltMethod> extends BaseHandlerDeps$1 {
   operation: ExecutingMeltOperation & MeltMethodMeta<M>;
   wallet: Wallet;
 }
@@ -2746,15 +2221,15 @@ interface MeltMethodHandler<M extends MeltMethod = MeltMethod> {
   createQuote(ctx: CreateMeltQuoteContext<M>): Promise<MeltQuote<M>>;
   fetchRemoteQuote(ctx: FetchRemoteMeltQuoteContext<M>): Promise<MeltQuote<M>>;
   prepare(ctx: BasePrepareContext<M>): Promise<PreparedMeltOperation & MeltMethodMeta<M>>;
-  execute(ctx: ExecuteContext<M>): Promise<ExecutionResult<M>>;
+  execute(ctx: ExecuteContext$1<M>): Promise<ExecutionResult<M>>;
   finalize?(ctx: FinalizeContext<M>): Promise<FinalizeResult<M>>;
   rollback?(ctx: RollbackContext<M>): Promise<void>;
-  checkPending?(ctx: PendingContext<M>): Promise<PendingCheckResult>;
+  checkPending?(ctx: PendingContext$1<M>): Promise<PendingCheckResult>;
   /**
    * Recover an executing operation that failed mid-execution.
    * Handlers must implement this method to handle recovery logic.
    */
-  recoverExecuting(ctx: RecoverExecutingContext<M>): Promise<ExecutionResult<M>>;
+  recoverExecuting(ctx: RecoverExecutingContext$1<M>): Promise<ExecutionResult<M>>;
 }
 type MeltMethodHandlerRegistry = Record<MeltMethod, MeltMethodHandler<any>>;
 //#endregion
@@ -2804,15 +2279,15 @@ interface PreparedData {
   /** Whether the operation requires a swap (false = exact match melt) */
   needsSwap: boolean;
   /** The amount requested to melt (before fees) */
-  amount: Amount$1;
+  amount: Amount;
   /** Calculated fee for the swap (0 if exact match) */
-  fee_reserve: Amount$1;
+  fee_reserve: Amount;
   /** The ID of the quote used for the melt operation */
   quoteId: string;
   /** The fee for the swap (0 if exact match) */
-  swap_fee: Amount$1;
+  swap_fee: Amount;
   /** Total amount of input proofs selected */
-  inputAmount: Amount$1;
+  inputAmount: Amount;
   /** Secrets of proofs reserved as input for this operation */
   inputProofSecrets: string[];
   /**
@@ -2880,7 +2355,7 @@ interface FinalizedMeltOperationBase extends MeltOperationBase, PreparedData {
    * May be 0 if no change was returned.
    * May be undefined for legacy operations finalized before settlement tracking was added.
    */
-  changeAmount?: Amount$1;
+  changeAmount?: Amount;
   /**
    * Actual fee impact after settlement.
    * Calculated as: inputAmount - amount - changeAmount
@@ -2888,7 +2363,7 @@ interface FinalizedMeltOperationBase extends MeltOperationBase, PreparedData {
    * This represents the actual cost paid for the melt, which may differ from fee_reserve.
    * May be undefined for legacy operations finalized before settlement tracking was added.
    */
-  effectiveFee?: Amount$1;
+  effectiveFee?: Amount;
 }
 type FinalizedMeltOperation<M extends MeltMethod = MeltMethod> = FinalizedMeltOperationBase & MeltMethodMeta<M> & {
   finalizedData?: MeltMethodFinalizedData<M>;
@@ -2923,11 +2398,6 @@ type MeltOperation = InitMeltOperation | PreparedMeltOperation | ExecutingMeltOp
  * Any operation that has been prepared (has PreparedData)
  */
 type PreparedOrLaterOperation = PreparedMeltOperation | ExecutingMeltOperation | PendingMeltOperation | FinalizedMeltOperation | FailedMeltOperation | RollingBackMeltOperation | RolledBackMeltOperation;
-/**
- * Terminal states - operation is finished
- * Note: 'rolling_back' is NOT terminal - it's a transient state that needs recovery
- */
-type TerminalMeltOperation = FinalizedMeltOperation | RolledBackMeltOperation | FailedMeltOperation;
 //#endregion
 //#region models/History.d.ts
 type HistoryType = 'mint' | 'melt' | 'send' | 'receive';
@@ -2954,24 +2424,24 @@ type MintHistoryEntry = OperationHistoryBase & {
   paymentRequest: string;
   quoteId: string;
   state: MintHistoryState;
-  amount: Amount$1;
+  amount: Amount;
   remoteState?: string;
 };
 type MeltHistoryEntry = OperationHistoryBase & {
   type: 'melt';
   quoteId: string;
   state: MeltHistoryState;
-  amount: Amount$1;
+  amount: Amount;
 };
 type SendHistoryEntry = OperationHistoryBase & {
   type: 'send';
-  amount: Amount$1;
+  amount: Amount;
   state: SendHistoryState; /** Token is only available after execute (state >= pending) */
   token?: Token;
 };
 type ReceiveHistoryEntry = OperationHistoryBase & {
   type: 'receive';
-  amount: Amount$1;
+  amount: Amount;
   state: ReceiveHistoryState;
   token?: Token;
 };
@@ -2990,84 +2460,28 @@ type LegacyMintHistoryEntry = LegacyHistoryBase & {
   paymentRequest: string;
   quoteId: string;
   state: LegacyMintHistoryState;
-  amount: Amount$1;
+  amount: Amount;
 };
 type LegacyMeltHistoryEntry = LegacyHistoryBase & {
   type: 'melt';
   quoteId: string;
   state: LegacyMeltHistoryState;
-  amount: Amount$1;
+  amount: Amount;
 };
 type LegacySendHistoryEntry = LegacyHistoryBase & {
   type: 'send';
-  amount: Amount$1;
+  amount: Amount;
   state: LegacySendHistoryState;
   token?: Token;
 };
 type LegacyReceiveHistoryEntry = LegacyHistoryBase & {
   type: 'receive';
-  amount: Amount$1;
+  amount: Amount;
   state: LegacyReceiveHistoryState;
   token?: Token;
 };
 type LegacyHistoryEntry = LegacyMintHistoryEntry | LegacyMeltHistoryEntry | LegacySendHistoryEntry | LegacyReceiveHistoryEntry;
 type HistoryEntry = OperationHistoryEntry | LegacyHistoryEntry;
-type LegacyHistoryRowInput = {
-  legacyHistoryId: string | number;
-  type: HistoryType;
-  createdAt: number;
-  mintUrl: string;
-  unit: string;
-  amount: Amount$1;
-  quoteId?: string | null;
-  state?: string | null;
-  paymentRequest?: string | null;
-  token?: Token;
-  metadata?: Record<string, string>;
-  operationId?: string | null;
-};
-declare function isOperationHistoryEntry(entry: HistoryEntry): entry is OperationHistoryEntry;
-declare function isLegacyHistoryEntry(entry: HistoryEntry): entry is LegacyHistoryEntry;
-declare function operationHistoryId(type: HistoryType, operationId: string): string;
-declare function legacyHistoryId(legacyId: string | number): string;
-declare function parseHistoryEntryId(id: string): {
-  source: 'operation';
-  type: HistoryType;
-  operationId: string;
-} | {
-  source: 'legacy';
-  legacyHistoryId: string;
-} | null;
-declare function compareHistoryEntries(a: HistoryEntry, b: HistoryEntry): number;
-declare function projectSendOperation(operation: SendOperation): SendHistoryEntry | null;
-declare function projectMeltOperation(operation: MeltOperation): MeltHistoryEntry | null;
-declare function projectMintOperation(operation: MintOperation): MintHistoryEntry | null;
-declare function projectReceiveOperation(operation: ReceiveOperation): ReceiveHistoryEntry | null;
-declare function projectOperationToHistoryEntry(type: HistoryType, operation: SendOperation | MeltOperation | MintOperation | ReceiveOperation): OperationHistoryEntry | null;
-declare function projectLegacyHistoryRow(row: LegacyHistoryRowInput): LegacyHistoryEntry;
-//#endregion
-//#region repositories/memory/MemoryRepositories.d.ts
-declare class MemoryRepositories implements Repositories {
-  mintRepository: MintRepository;
-  keyRingRepository: KeyRingRepository;
-  counterRepository: CounterRepository;
-  keysetRepository: KeysetRepository;
-  proofRepository: ProofRepository;
-  mintQuoteRepository: MintQuoteRepository;
-  legacyMintQuoteRepository: LegacyMintQuoteRepository;
-  meltQuoteRepository: MeltQuoteRepository;
-  historyRepository: HistoryProjectionRepository;
-  sendOperationRepository: SendOperationRepository;
-  meltOperationRepository: MeltOperationRepository;
-  authSessionRepository: AuthSessionRepository;
-  mintOperationRepository: MintOperationRepository;
-  receiveOperationRepository: ReceiveOperationRepository;
-  paymentRequestReceiveOperationRepository: PaymentRequestReceiveOperationRepository;
-  paymentRequestReceiveAttemptRepository: PaymentRequestReceiveAttemptRepository;
-  constructor();
-  init(): Promise<void>;
-  withTransaction<T>(fn: (repos: RepositoryTransactionScope) => Promise<T>): Promise<T>;
-}
 //#endregion
 //#region repositories/index.d.ts
 interface ProofUnitFilter {
@@ -3076,12 +2490,12 @@ interface ProofUnitFilter {
 }
 interface MintRepository {
   isTrustedMint(mintUrl: string): Promise<boolean>;
-  getMintByUrl(mintUrl: string): Promise<Mint>;
-  getAllMints(): Promise<Mint[]>;
-  getAllTrustedMints(): Promise<Mint[]>;
-  addNewMint(mint: Mint): Promise<void>;
-  addOrUpdateMint(mint: Mint): Promise<void>;
-  updateMint(mint: Mint): Promise<void>;
+  getMintByUrl(mintUrl: string): Promise<Mint$1>;
+  getAllMints(): Promise<Mint$1[]>;
+  getAllTrustedMints(): Promise<Mint$1[]>;
+  addNewMint(mint: Mint$1): Promise<void>;
+  addOrUpdateMint(mint: Mint$1): Promise<void>;
+  updateMint(mint: Mint$1): Promise<void>;
   setMintTrusted(mintUrl: string, trusted: boolean): Promise<void>;
   deleteMint(mintUrl: string): Promise<void>;
 }
@@ -3179,9 +2593,6 @@ interface MintQuoteRepository {
   setMintQuoteState(mintUrl: string, method: string, quoteId: string, state: MintMethodRemoteState, observedAt?: number): Promise<void>;
   getPendingMintQuotes(method?: string): Promise<MintQuote[]>;
 }
-interface LegacyMintQuoteRepository {
-  getPendingLegacyMintQuotes(mintUrl?: string): Promise<MintQuote[]>;
-}
 /**
  * Stores canonical melt quotes.
  *
@@ -3259,12 +2670,6 @@ interface MeltOperationRepository {
   /** Delete a melt operation */
   delete(id: string): Promise<void>;
 }
-interface AuthSessionRepository {
-  getSession(mintUrl: string): Promise<AuthSession | null>;
-  saveSession(session: AuthSession): Promise<void>;
-  deleteSession(mintUrl: string): Promise<void>;
-  getAllSessions(): Promise<AuthSession[]>;
-}
 interface MintOperationRepository {
   /** Create a new mint operation */
   create(operation: MintOperation): Promise<void>;
@@ -3323,700 +2728,217 @@ interface PaymentRequestReceiveAttemptRepository {
   getByState(state: PaymentRequestReceiveAttemptState): Promise<PaymentRequestReceiveAttempt[]>;
   delete(id: string): Promise<void>;
 }
-interface RepositoriesBase {
-  mintRepository: MintRepository;
-  keyRingRepository: KeyRingRepository;
-  counterRepository: CounterRepository;
-  keysetRepository: KeysetRepository;
-  proofRepository: ProofRepository;
-  mintQuoteRepository: MintQuoteRepository;
-  legacyMintQuoteRepository: LegacyMintQuoteRepository;
-  meltQuoteRepository: MeltQuoteRepository;
-  historyRepository: HistoryProjectionRepository;
-  sendOperationRepository: SendOperationRepository;
-  meltOperationRepository: MeltOperationRepository;
-  authSessionRepository: AuthSessionRepository;
-  mintOperationRepository: MintOperationRepository;
-  receiveOperationRepository: ReceiveOperationRepository;
-  paymentRequestReceiveOperationRepository: PaymentRequestReceiveOperationRepository;
-  paymentRequestReceiveAttemptRepository: PaymentRequestReceiveAttemptRepository;
-}
-interface Repositories extends RepositoriesBase {
-  init(): Promise<void>;
-  withTransaction<T>(fn: (repos: RepositoryTransactionScope) => Promise<T>): Promise<T>;
-}
-type RepositoryTransactionScope = RepositoriesBase;
 //#endregion
-//#region api/WalletBalancesApi.d.ts
-declare class WalletBalancesApi {
-  private readonly proofService;
-  constructor(proofService: ProofService);
-  byMint(scope?: BalanceQuery): Promise<BalancesByMint>;
-  byMintAndUnit(scope?: BalanceQuery): Promise<BalancesByMintAndUnit>;
-  byUnit(scope?: BalanceQuery): Promise<BalancesByUnit>;
-  total(scope?: BalanceQuery): Promise<BalanceSnapshot>;
-  totalByUnit(scope?: BalanceQuery): Promise<BalancesByUnit>;
-}
-//#endregion
-//#region api/WalletApi.d.ts
-interface WalletRestoreOptions {
-  /**
-   * Optional unit filter. Units are normalized to lowercase.
-   * Omit this to restore every keyset unit known by the mint.
-   */
-  units?: string[];
-}
-interface WalletSweepOptions {
-  /**
-   * Optional unit filter. Units are normalized to lowercase.
-   * Omit this to sweep every keyset unit known by the mint.
-   */
-  units?: string[];
-}
-declare class WalletApi {
-  private mintService;
-  private walletService;
-  private proofService;
-  private walletRestoreService;
-  private receiveOperationService;
-  private readonly tokenService;
-  private readonly logger?;
-  readonly balances: WalletBalancesApi;
-  constructor(mintService: MintService, walletService: WalletService, proofService: ProofService, walletRestoreService: WalletRestoreService, receiveOperationService: ReceiveOperationService, tokenService: TokenService, logger?: Logger);
-  /**
-   * Receive a token in one shot.
-   *
-   * For a multi-step receive flow (review fees/amounts before committing),
-   * use `manager.ops.receive.prepare()` and `manager.ops.receive.execute()`.
-   */
-  receive(token: Token | string): Promise<void>;
-  restore(mintUrl: string, options?: WalletRestoreOptions): Promise<void>;
-  /**
-   * Sweeps a mint by sweeping each keyset and adds the swept proofs to the wallet
-   * @param mintUrl - The URL of the mint to sweep
-   * @param bip39seed - The BIP39 seed of the wallet to sweep
-   */
-  sweep(mintUrl: string, bip39seed: Uint8Array, options?: WalletSweepOptions): Promise<void>;
-  /**
-   * Decode a token string into a Token object.
-   * If mintUrl is provided, decodes token with mint keysets (supports all token formats).
-   * If no mintUrl, attempts to decode using wallet's known keysets (may fail for some token formats).
-   *
-   * Note: For reliable decoding of all token formats, provide a mintUrl.
-   *
-   * @param tokenString - The encoded token string to decode
-   * @param mintUrl - Optional mint URL to use for decoding (provides access to mint keysets for decoding)
-   * @returns The decoded Token or array of Proofs
-   */
-  decodeToken(tokenString: string, mintUrl?: string): Promise<Token>;
-  /**
-   * Encode a token to a string.
-   * @param token - The token to encode
-   * @param opts - Optional encoding options
-   * @returns Encoded token string
-   */
-  encodeToken(token: Token, opts?: {
-    removeDleq?: boolean;
-  }): string;
-  /**
-   * Encode a PaymentRequest to a string.
-   * @param paymentRequest - The PaymentRequest to encode
-   * @param version - Encoding version ('creqA' for base64 text, 'creqB' for bech32m binary). Defaults to 'creqA'.
-   * @returns Encoded payment request string
-   */
-  encodePaymentRequest(paymentRequest: PaymentRequest, version?: 'creqA' | 'creqB'): string;
-  private getUnitFilter;
-  private getUnitScopedKeysets;
-}
-//#endregion
-//#region api/MintApi.d.ts
-declare class MintApi {
-  private readonly mintService;
-  constructor(mintService: MintService);
-  addMint(mintUrl: string, options?: {
-    trusted?: boolean;
-  }): Promise<{
-    mint: Mint;
-    keysets: Keyset[];
-  }>;
-  getMintInfo(mintUrl: string): Promise<MintInfo>;
-  /** Check whether a mint supports one method/unit pair for minting or melting. */
-  checkPaymentMethodCapability(input: CheckPaymentMethodCapabilityInput): Promise<PaymentMethodCapabilityCheck>;
-  /** List enabled Payment Method Capabilities advertised by NUT-04/NUT-05 mint metadata. */
-  listPaymentMethodCapabilities(input: ListPaymentMethodCapabilitiesInput): Promise<PaymentMethodCapability[]>;
-  isTrustedMint(mintUrl: string): Promise<boolean>;
-  getAllMints(): Promise<Mint[]>;
-  getAllTrustedMints(): Promise<Mint[]>;
-  trustMint(mintUrl: string): Promise<void>;
-  untrustMint(mintUrl: string): Promise<void>;
-}
-//#endregion
-//#region api/KeyRingApi.d.ts
-declare class KeyRingApi {
-  private readonly keyRingService;
-  constructor(keyRingService: KeyRingService);
-  /**
-   * Generates a new keypair and stores it in the keyring.
-   * @param dumpSecretKey - If true, returns the full keypair including the secret key.
-   *                        If false or omitted, returns only the public key.
-   *                        WARNING: The secret key is sensitive cryptographic material. Handle with care.
-   * @returns The full keypair (if dumpSecretKey is true) or just the public key (if false/omitted)
-   */
-  generateKeyPair(): Promise<{
-    publicKeyHex: string;
-  }>;
-  generateKeyPair(dumpSecretKey: true): Promise<Keypair>;
-  generateKeyPair(dumpSecretKey: false): Promise<{
-    publicKeyHex: string;
-  }>;
-  /**
-   * Adds an existing keypair to the keyring using a secret key.
-   * @param secretKey - The 32-byte secret key as Uint8Array
-   */
-  addKeyPair(secretKey: Uint8Array): Promise<Keypair>;
-  /**
-   * Removes a keypair from the keyring.
-   * @param publicKey - The public key (hex string) of the keypair to remove
-   */
-  removeKeyPair(publicKey: string): Promise<void>;
-  /**
-   * Retrieves a specific keypair by its public key.
-   * @param publicKey - The public key (hex string) to look up
-   * @returns The keypair if found, null otherwise
-   */
-  getKeyPair(publicKey: string): Promise<Keypair | null>;
-  /**
-   * Gets the most recently added keypair.
-   * @returns The latest keypair if any exist, null otherwise
-   */
-  getLatestKeyPair(): Promise<Keypair | null>;
-  /**
-   * Gets all keypairs stored in the keyring.
-   * @returns Array of all keypairs
-   */
-  getAllKeyPairs(): Promise<Keypair[]>;
-}
-//#endregion
-//#region api/SubscriptionApi.d.ts
-declare class SubscriptionApi {
-  private readonly subs;
-  private readonly logger?;
-  constructor(subs: SubscriptionManager, logger?: Logger);
-  awaitMintQuotePaid(mintUrl: string, quoteId: string, method?: 'bolt11' | 'onchain' | 'bolt12'): Promise<unknown>;
-  awaitMeltQuotePaid(mintUrl: string, quoteId: string, method?: 'bolt11' | 'onchain' | 'bolt12'): Promise<unknown>;
-  private awaitFirstNotification;
-}
-//#endregion
-//#region api/HistoryApi.d.ts
-declare class HistoryApi {
-  private historyService;
-  constructor(historyService: HistoryService);
-  getPaginatedHistory(offset?: number, limit?: number): Promise<HistoryEntry[]>;
-  getHistoryEntryById(id: string): Promise<HistoryEntry | null>;
-  getOperationIdForHistoryEntry(id: string): Promise<string | null>;
-}
-//#endregion
-//#region api/AuthApi.d.ts
+//#region operations/mint/MintMethodHandler.d.ts
 /**
- * Public API for NUT-21/22 authentication.
- *
- * Thin wrapper that delegates to AuthService,
- * consistent with the other Api → Service pattern.
+ * Registry of supported mint methods and payload shapes.
+ * Extend via declaration merging to support additional methods.
  */
-declare class AuthApi {
-  private readonly authService;
-  constructor(authService: AuthService);
-  startDeviceAuth(mintUrl: string): Promise<{
-    verification_uri: string;
-    verification_uri_complete: string | undefined;
-    user_code: string;
-    poll: () => Promise<_cashu_cashu_ts0.TokenResponse>;
-    cancel: () => void;
-  }>;
-  login(mintUrl: string, tokens: {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-    scope?: string;
-  }): Promise<AuthSession>;
-  restore(mintUrl: string): Promise<boolean>;
-  logout(mintUrl: string): Promise<void>;
-  getSession(mintUrl: string): Promise<AuthSession>;
-  hasSession(mintUrl: string): Promise<boolean>;
-  getAuthProvider(mintUrl: string): AuthProvider | undefined;
-  getPoolSize(mintUrl: string): number;
+interface MintMethodDefinitions {
+  bolt11: {
+    methodData: Record<string, never>;
+    createQuoteData: {
+      amount: UnitAmount;
+    };
+    quoteData: {
+      amount: Amount;
+    };
+    remoteState: 'UNPAID' | 'PAID' | 'ISSUED';
+    quote: MintQuoteBolt11Response;
+  };
+  onchain: {
+    methodData: Record<string, never>;
+    createQuoteData: {
+      unit: string;
+    };
+    quoteData: {
+      pubkey: string;
+      amountPaid: Amount;
+      amountIssued: Amount;
+    };
+    remoteState: never;
+    quote: MintQuoteOnchainResponse;
+  };
+  bolt12: {
+    methodData: Record<string, never>;
+    createQuoteData: {
+      unit: string;
+      amount?: UnitAmount;
+      description?: string;
+    };
+    quoteData: {
+      pubkey: string;
+      amount?: Amount;
+      amountPaid: Amount;
+      amountIssued: Amount;
+    };
+    remoteState: never;
+    quote: MintQuoteBolt12Response;
+  };
 }
-//#endregion
-//#region api/SendOpsApi.d.ts
-type NonDefaultSendMethod = Exclude<SendMethod, 'default'>;
-type SendTarget = { [M in NonDefaultSendMethod]: {
-  type: M;
-} & SendMethodData<M> }[NonDefaultSendMethod];
-interface PrepareSendInput {
-  /** Mint to send from. */
-  mintUrl: string;
-  /** Amount to send. Bare amounts use `sat` unless `unit` is set. */
-  amount: UnitAmountLike;
-  /** Unit to send. */
-  unit?: string;
-  /** Optional non-default send target, for example a P2PK recipient. */
-  target?: SendTarget;
-}
-interface SendRecoveryApi {
-  /** Runs the startup-style recovery sweep for send operations. */
-  run(): Promise<void>;
-  /** Returns true while a recovery sweep is running. */
-  inProgress(): boolean;
-}
-interface SendDiagnosticsApi {
-  /** Returns true while an operation is currently locked by the service. */
-  isLocked(operationId: string): boolean;
-}
-/**
- * Operation-oriented API for send workflows.
- *
- * This API exposes the send lifecycle explicitly:
- * 1. `prepare()` to create and reserve inputs
- * 2. `execute()` to produce the outgoing token
- * 3. `refresh()` to re-check pending operations
- * 4. `cancel()` or `reclaim()` to roll back when allowed
- */
-declare class SendOpsApi {
-  private readonly sendOperationService;
-  /** Recovery helpers for send operations. */
-  readonly recovery: SendRecoveryApi;
-  /** Lightweight diagnostics for send operations. */
-  readonly diagnostics: SendDiagnosticsApi;
-  constructor(sendOperationService: SendOperationService);
-  /**
-   * Creates a prepared send operation without executing it.
-   *
-   * Use this to inspect the operation, fee impact, and target configuration
-   * before producing the outgoing token.
-   */
-  prepare(input: PrepareSendInput): Promise<PreparedSendOperation>;
-  /**
-   * Executes a prepared send operation and returns the shareable token.
-   *
-   * Accepts either a prepared operation object or its ID. The latest operation
-   * state is always reloaded before execution. When provided, `options.memo`
-   * is trimmed and persisted on the returned token; whitespace-only memos are omitted.
-   */
-  execute(operationOrId: SendOperation | string, options?: ExecuteSendOptions): Promise<{
-    operation: PendingSendOperation;
-    token: Token;
-  }>;
-  /** Returns a send operation by ID, or `null` when it does not exist. */
-  get(operationId: string): Promise<SendOperation | null>;
-  /** Lists send operations that are prepared and ready to execute or cancel. */
-  listPrepared(): Promise<PreparedSendOperation[]>;
-  /** Lists send operations that are currently in flight. */
-  listInFlight(): Promise<SendOperation[]>;
-  /**
-   * Re-checks a send operation and returns its latest persisted state.
-   *
-   * Pending operations are actively checked with the service before the updated
-   * operation is returned.
-   */
-  refresh(operationId: string): Promise<SendOperation>;
-  /**
-   * Cancels a prepared send operation before it has been executed.
-   */
-  cancel(operationId: string): Promise<void>;
-  /**
-   * Attempts to reclaim a pending send operation.
-   *
-   * This is intended for sends that are already in flight but still support
-   * rollback according to the underlying send method.
-   */
-  reclaim(operationId: string): Promise<void>;
-  /**
-   * Finalizes a pending send operation explicitly.
-   *
-   * Most callers should rely on proof-state watchers when available, but this
-   * method remains useful when the caller knows the token has been claimed.
-   */
-  finalize(operationId: string): Promise<void>;
-  private getCreateOptions;
-  private resolveOperation;
-  private requireOperation;
-}
-//#endregion
-//#region api/ReceiveOpsApi.d.ts
-interface PrepareReceiveInput {
-  /** Token to receive, either encoded or already decoded. */
-  token: Token | string;
-}
-interface ReceiveRecoveryApi {
-  /** Runs the startup-style recovery sweep for receive operations. */
-  run(): Promise<void>;
-  /** Returns true while a recovery sweep is running. */
-  inProgress(): boolean;
-}
-interface ReceiveDiagnosticsApi {
-  /** Returns true while an operation is currently locked by the service. */
-  isLocked(operationId: string): boolean;
-}
-/**
- * Operation-oriented API for receive workflows.
- *
- * This API exposes receiving as an explicit lifecycle so callers can inspect,
- * resume, and cancel operations instead of relying only on a one-shot receive
- * call.
- */
-declare class ReceiveOpsApi {
-  private readonly receiveOperationService;
-  /** Recovery helpers for receive operations. */
-  readonly recovery: ReceiveRecoveryApi;
-  /** Lightweight diagnostics for receive operations. */
-  readonly diagnostics: ReceiveDiagnosticsApi;
-  constructor(receiveOperationService: ReceiveOperationService);
-  /**
-   * Decodes and validates a token, then prepares a receive operation without
-   * executing it.
-   */
-  prepare(input: PrepareReceiveInput): Promise<PreparedReceiveOperation>;
-  /**
-   * Executes a prepared receive operation.
-   *
-   * Accepts either a prepared operation object or its ID. The latest operation
-   * state is always reloaded before execution.
-   */
-  execute(operationOrId: ReceiveOperation | string): Promise<FinalizedReceiveOperation>;
-  /** Returns a receive operation by ID, or `null` when it does not exist. */
-  get(operationId: string): Promise<ReceiveOperation | null>;
-  /** Lists receive operations that are prepared and ready to execute or cancel. */
-  listPrepared(): Promise<PreparedReceiveOperation[]>;
-  /** Lists receive operations that are currently in flight. */
-  listInFlight(): Promise<ReceiveOperation[]>;
-  /**
-   * Re-checks a receive operation and returns its latest persisted state.
-   *
-   * Executing operations are actively recovered before the updated operation is
-   * returned.
-   */
-  refresh(operationId: string): Promise<ReceiveOperation>;
-  /**
-   * Cancels a receive operation that has not completed yet.
-   *
-   * Only `init` and `prepared` receive operations can be cancelled.
-   */
-  cancel(operationId: string, reason?: string): Promise<void>;
-  private resolveOperation;
-  private requireOperation;
-}
-//#endregion
-//#region api/MeltOpsApi.d.ts
-/** Melt methods supported by the default `Manager` wiring. */
-type DefaultSupportedMeltMethod = 'bolt11' | 'bolt12' | 'onchain';
-type PrepareMeltInput<TSupported extends MeltMethod = DefaultSupportedMeltMethod> = { [M in TSupported]: {
-  /** Existing canonical melt quote or structural quote reference. */quote: MeltQuoteRef<M>;
-} & (M extends 'onchain' ? {
-  feeIndex: number;
-} : {
-  feeIndex?: number;
-}) }[TSupported];
-interface MeltRecoveryApi {
-  /** Runs the startup-style recovery sweep for melt operations. */
-  run(): Promise<void>;
-  /** Returns true while a recovery sweep is running. */
-  inProgress(): boolean;
-}
-interface MeltDiagnosticsApi {
-  /** Returns true while an operation is currently locked by the service. */
-  isLocked(operationId: string): boolean;
-}
-/**
- * Operation-oriented API for melt workflows.
- *
- * This API makes the melt lifecycle explicit so callers can prepare a payment,
- * execute it, inspect or refresh its state, and recover or roll it back when
- * allowed by the underlying method.
- */
-declare class MeltOpsApi<TSupported extends MeltMethod = DefaultSupportedMeltMethod> {
-  private readonly meltOperationService;
-  /** Recovery helpers for melt operations. */
-  readonly recovery: MeltRecoveryApi;
-  /** Lightweight diagnostics for melt operations. */
-  readonly diagnostics: MeltDiagnosticsApi;
-  constructor(meltOperationService: MeltOperationService);
-  /**
-   * Prepares a melt operation against an existing canonical quote without executing it.
-   *
-   * Use this to inspect the generated operation and any quote-related data
-   * before committing to the external payment.
-   */
-  prepare(input: PrepareMeltInput<TSupported>): Promise<PreparedMeltOperation>;
-  /**
-   * Executes a prepared melt operation.
-   *
-   * Accepts either a prepared operation object or its ID. The latest operation
-   * state is always reloaded before execution.
-   */
-  execute(operationOrId: MeltOperation | string): Promise<PendingMeltOperation | FinalizedMeltOperation>;
-  /** Returns a melt operation by ID, or `null` when it does not exist. */
-  get(operationId: string): Promise<MeltOperation | null>;
-  /** Returns the tracked melt operation for a canonical quote identity, or `null`. */
-  getByQuote(input: QuoteIdentity): Promise<MeltOperation | null>;
-  /** Lists melt operations for a mint URL and quote ID. */
-  listByQuote(input: QuoteIdentity): Promise<MeltOperation[]>;
-  /** Lists melt operations that are prepared and ready to execute or cancel. */
-  listPrepared(): Promise<PreparedMeltOperation[]>;
-  /** Lists melt operations that are currently in flight. */
-  listInFlight(): Promise<MeltOperation[]>;
-  /**
-   * Re-checks a melt operation and returns its latest persisted state.
-   *
-   * Pending operations are actively checked with the service before the updated
-   * operation is returned. Executing operations are recovered before returning
-   * the updated state.
-   */
-  refresh(operationId: string): Promise<MeltOperation>;
-  /**
-   * Cancels a prepared melt operation before payment has entered the pending
-   * phase.
-   */
-  cancel(operationId: string, reason?: string): Promise<void>;
-  /**
-   * Attempts to reclaim a pending melt operation.
-   *
-   * This is intended for in-flight melts whose handler determines that rollback
-   * is still safe.
-   */
-  reclaim(operationId: string, reason?: string): Promise<void>;
-  /**
-   * Finalizes a pending melt operation explicitly.
-   *
-   * Most callers should prefer `refresh()` unless they already know the melt is
-   * ready to finalize.
-   */
-  finalize(operationId: string): Promise<void>;
-  private resolveOperation;
-  private requireOperation;
-}
-//#endregion
-//#region api/MintOpsApi.d.ts
-/** Mint methods supported by the default `Manager` wiring. */
-type DefaultSupportedMintMethod = 'bolt11' | 'onchain' | 'bolt12';
-type PrepareMintInput<TSupported extends MintMethod = DefaultSupportedMintMethod> = {
-  /** Existing canonical mint quote or structural quote reference. */quote: MintQuoteRef<TSupported>; /** Amount to mint using the canonical quote's stored unit. */
-  amount: AmountLike$1;
-};
-interface MintRecoveryApi {
-  /** Runs the startup-style recovery sweep for mint operations. */
-  run(): Promise<void>;
-  /** Returns true while a recovery sweep is running. */
-  inProgress(): boolean;
-}
-interface MintDiagnosticsApi {
-  /** Returns true while an operation is currently locked by the service. */
-  isLocked(operationId: string): boolean;
-}
-/**
- * Operation-oriented API for quote-backed mint workflows.
- *
- * This API makes the mint lifecycle explicit so callers can move a canonical
- * quote into a durable pending operation, execute it, and inspect its progress.
- */
-declare class MintOpsApi<TSupported extends MintMethod = DefaultSupportedMintMethod> {
-  private readonly mintOperationService;
-  /** Recovery helpers for mint operations. */
-  readonly recovery: MintRecoveryApi;
-  /** Lightweight diagnostics for mint operations. */
-  readonly diagnostics: MintDiagnosticsApi;
-  constructor(mintOperationService: MintOperationService);
-  /**
-   * Prepares a mint operation against an existing canonical quote without executing it.
-   */
-  prepare(input: PrepareMintInput<TSupported>): Promise<PendingMintOperation>;
-  /**
-   * Executes a pending mint operation and returns the latest operation state.
-   */
-  execute(operationOrId: MintOperation | string): Promise<MintOperation>;
-  /** Returns a mint operation by ID, or `null` when it does not exist. */
-  get(operationId: string): Promise<MintOperation | null>;
-  /** Lists mint operations for a mint URL and quote ID. */
-  listByQuote(input: QuoteIdentity): Promise<MintOperation[]>;
-  /** Lists mint operations that are pending redemption or remote settlement. */
-  listPending(): Promise<PendingMintOperation[]>;
-  /** Lists mint operations that are pending or currently executing. */
-  listInFlight(): Promise<MintOperation[]>;
-  /**
-   * Checks the remote quote state for a pending mint operation.
-   * Paid or issued quotes are reconciled immediately.
-   */
-  checkPayment(operationId: string): Promise<PendingMintCheckResult>;
-  /**
-   * Re-checks a mint operation and returns its latest persisted state.
-   */
-  refresh(operationId: string): Promise<MintOperation>;
-  /**
-   * Attempts to finalize a mint operation explicitly.
-   *
-   * Pending operations are executed, executing operations are recovered,
-   * and terminal operations are returned as-is.
-   */
-  finalize(operationId: string): Promise<MintOperation>;
-  private resolveOperation;
-  private requireOperation;
-}
-//#endregion
-//#region api/QuoteApi.d.ts
-type DefaultSupportedMintQuoteMethod = 'bolt11' | 'onchain' | 'bolt12';
-type CreateMintQuoteInput = {
-  mintUrl: string;
-  method: 'bolt11';
-  amount: UnitAmountLike;
-  unit?: string;
-} | {
-  mintUrl: string;
-  method: 'onchain';
-  unit?: string;
-} | {
-  mintUrl: string;
-  method: 'bolt12';
-  unit?: string;
-  amount?: UnitAmountLike;
-  description?: string;
-};
-type ImportMintQuoteInput = {
-  /** Mint that issued the existing quote. */mintUrl: string; /** Existing quote snapshot to persist as canonical quote state. */
-  quote: MintMethodQuoteSnapshot<'bolt11'>; /** Mint method for the quote snapshot. */
-  method: 'bolt11';
-};
-type ListPendingMintQuotesInput = {
-  method?: DefaultSupportedMintQuoteMethod;
-};
-type CreateMeltQuoteInput<TSupported extends DefaultSupportedMeltMethod = DefaultSupportedMeltMethod> = { [M in TSupported]: {
-  mintUrl: string;
+type MintMethod = keyof MintMethodDefinitions;
+type MintMethodData<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['methodData'];
+type MintMethodCreateQuoteData<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['createQuoteData'];
+type MintMethodQuoteData<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['quoteData'];
+type MintMethodRemoteState<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['remoteState'];
+type MintMethodQuoteSnapshot<M extends MintMethod = MintMethod> = MintMethodDefinitions[M]['quote'];
+interface MintMethodMeta<M extends MintMethod = MintMethod> {
   method: M;
-  methodData: MeltMethodInputData<M>;
-  unit?: string;
-} }[TSupported];
-type ListPendingMeltQuotesInput = {
-  method?: DefaultSupportedMeltMethod;
+  methodData: MintMethodData<M>;
+}
+interface BaseHandlerDeps {
+  proofRepository: ProofRepository;
+  proofService: ProofService;
+  walletService: WalletService;
+  mintService: MintService;
+  mintAdapter: MintAdapter;
+  eventBus: EventBus<CoreEvents>;
+  logger?: Logger;
+}
+interface CreateMintQuoteContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps {
+  mintUrl: string;
+  createQuoteData: MintMethodCreateQuoteData<M>;
+  wallet: Wallet;
+}
+interface FetchRemoteMintQuoteContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps {
+  quote: MintQuote<M>;
+}
+interface PrepareContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps {
+  operation: InitMintOperation<M>;
+  wallet: Wallet;
+  importedQuote?: MintMethodQuoteSnapshot<M>;
+}
+interface ExecuteContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps {
+  operation: ExecutingMintOperation<M>;
+  wallet: Wallet;
+}
+interface RecoverExecutingContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps {
+  operation: ExecutingMintOperation<M>;
+  wallet: Wallet;
+}
+interface PendingContext<M extends MintMethod = MintMethod> extends BaseHandlerDeps {
+  operation: PendingMintOperation<M>;
+  wallet: Wallet;
+}
+type MintExecutionResult = {
+  status: 'ISSUED';
+  proofs: Proof[];
+} | {
+  status: 'ALREADY_ISSUED';
+} | {
+  status: 'FAILED';
+  error?: string;
 };
-declare class MintQuoteApi {
-  private readonly quoteLifecycle;
-  constructor(quoteLifecycle: QuoteLifecycle);
-  create(input: CreateMintQuoteInput): Promise<MintQuote>;
-  get(input: QuoteIdentity): Promise<MintQuote | null>;
-  import(input: ImportMintQuoteInput): Promise<MintQuote>;
-  listPending(input?: ListPendingMintQuotesInput): Promise<MintQuote[]>;
-  refresh(input: QuoteIdentity): Promise<MintQuote>;
+type RecoverExecutingResult = {
+  status: 'FINALIZED';
+} | {
+  status: 'TERMINAL';
+  error: string;
+} | {
+  status: 'PENDING';
+  error?: string;
+};
+type PendingMintCheckCategory = 'waiting' | 'ready' | 'completed' | 'terminal';
+interface PendingMintCheckResult<M extends MintMethod = MintMethod> {
+  observedRemoteState?: MintMethodRemoteState<M>;
+  observedRemoteStateAt: number;
+  quoteSnapshot?: MintMethodQuoteSnapshot<M>;
+  category: PendingMintCheckCategory;
+  terminalFailure?: MintOperationFailure;
 }
-declare class MeltQuoteApi {
-  private readonly quoteLifecycle;
-  constructor(quoteLifecycle: QuoteLifecycle);
-  create<M extends DefaultSupportedMeltMethod>(input: CreateMeltQuoteInput<M>): Promise<MeltQuote<M>>;
-  get(input: QuoteIdentity): Promise<MeltQuote | null>;
-  listPending(input?: ListPendingMeltQuotesInput): Promise<MeltQuote[]>;
-  refresh(input: QuoteIdentity): Promise<MeltQuote>;
+interface MintMethodHandler<M extends MintMethod = MintMethod> {
+  createQuote(ctx: CreateMintQuoteContext<M>): Promise<MintQuote<M>>;
+  fetchRemoteQuote(ctx: FetchRemoteMintQuoteContext<M>): Promise<MintQuote<M>>;
+  validateQuoteForPrepare?(quote: MintQuote<M>): Promise<void> | void;
+  prepare(ctx: PrepareContext<M>): Promise<PendingMintOperation<M>>;
+  execute(ctx: ExecuteContext<M>): Promise<MintExecutionResult>;
+  recoverExecuting(ctx: RecoverExecutingContext<M>): Promise<RecoverExecutingResult>;
+  checkPending(ctx: PendingContext<M>): Promise<PendingMintCheckResult<M>>;
 }
+type MintMethodHandlerRegistry = { [M in MintMethod]: MintMethodHandler<M> };
+//#endregion
+//#region infra/MintAdapter.d.ts
 /**
- * API for durable canonical quote state.
+ * Adapter for making HTTP requests to Cashu mints.
  *
- * Quote rows are not value movements and are separate from operation history.
+ * All requests are rate-limited through the MintRequestProvider,
+ * sharing the same rate limits with other components (e.g., WalletService).
  */
-declare class QuoteApi {
-  readonly mint: MintQuoteApi;
-  readonly melt: MeltQuoteApi;
-  constructor(quoteLifecycle: QuoteLifecycle);
+declare class MintAdapter {
+  private cashuMints;
+  private readonly requestProvider;
+  private readonly authProviders;
+  constructor(requestProvider: MintRequestProvider);
+  /** Register an AuthProvider for a mint (NUT-21/22). Invalidates the cached Mint instance. */
+  setAuthProvider(mintUrl: string, provider: AuthProvider): void;
+  /** Get the AuthProvider for a mint (if registered). */
+  getAuthProvider(mintUrl: string): AuthProvider | undefined;
+  /** Remove the AuthProvider for a mint. Invalidates the cached Mint instance. */
+  clearAuthProvider(mintUrl: string): void;
+  fetchMintInfo(mintUrl: string): Promise<MintInfo>;
+  fetchKeysets(mintUrl: string): Promise<GetKeysetsResponse>;
+  fetchKeysForId(mintUrl: string, id: string): Promise<KeysetKeypairs>;
+  private getCashuMint;
+  checkMintQuote<M extends MintMethod>(mintUrl: string, method: M, quoteId: string): Promise<MintMethodQuoteSnapshot<M>>;
+  checkMeltQuote(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt11Response>;
+  checkMeltQuoteBolt12(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt12Response>;
+  checkMeltQuoteOnchain(mintUrl: string, quoteId: string): Promise<MeltQuoteOnchainResponse>;
+  checkMeltQuoteState(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt11Response['state']>;
+  checkMeltQuoteBolt12State(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt12Response['state']>;
+  checkMeltQuoteOnchainState(mintUrl: string, quoteId: string): Promise<MeltQuoteOnchainResponse['state']>;
+  checkProofStates(mintUrl: string, Ys: string[]): Promise<_cashu_cashu_ts0.ProofState[]>;
+  customMeltBolt11(mintUrl: string, proofsToSend: Proof[], changeOutputs: OutputData[], quoteId: string): Promise<MeltQuoteBolt11Response>;
+  customMeltBolt12(mintUrl: string, proofsToSend: Proof[], changeOutputs: OutputData[], quoteId: string): Promise<MeltQuoteBolt12Response>;
+  customMeltOnchain(mintUrl: string, proofsToSend: Proof[], changeOutputs: OutputData[], quoteId: string, feeIndex: number): Promise<MeltQuoteOnchainResponse>;
 }
 //#endregion
-//#region api/OpsApi.d.ts
-/**
- * Unified entry point for operation-based wallet workflows.
- *
- * This API groups the high-level send, receive, and melt operation APIs under a
- * single object so callers can discover and use the new operation-oriented
- * lifecycle consistently.
- */
-declare class OpsApi {
-  readonly send: SendOpsApi;
-  /**
-   * Receive operations for preparing, executing, inspecting, refreshing, and
-   * recovering token receives.
-   */
-  readonly receive: ReceiveOpsApi;
-  /**
-   * Mint operations for preparing, executing, inspecting, and recovering
-   * quote-backed mint flows.
-   */
-  readonly mint: MintOpsApi;
-  /**
-   * Melt operations for preparing, executing, inspecting, refreshing, and
-   * recovering outbound payment flows such as bolt11 melts.
-   */
-  readonly melt: MeltOpsApi;
-  /**
-   * Send operations for preparing, executing, inspecting, refreshing, and
-   * recovering token sends.
-   */
-  constructor(send: SendOpsApi,
-  /**
-   * Receive operations for preparing, executing, inspecting, refreshing, and
-   * recovering token receives.
-   */
-
-  receive: ReceiveOpsApi,
-  /**
-   * Mint operations for preparing, executing, inspecting, and recovering
-   * quote-backed mint flows.
-   */
-
-  mint: MintOpsApi,
-  /**
-   * Melt operations for preparing, executing, inspecting, refreshing, and
-   * recovering outbound payment flows such as bolt11 melts.
-   */
-
-  melt: MeltOpsApi);
+//#region infra/SubscriptionManager.d.ts
+type SubscriptionCallback<TPayload = unknown> = (payload: TPayload) => void | Promise<void>;
+interface SubscriptionManagerOptions {
+  /** Slow polling interval while WS is connected (default: 20000ms) */
+  slowPollingIntervalMs?: number;
+  /** Fast polling interval after WS fails (default: 5000ms) */
+  fastPollingIntervalMs?: number;
 }
-//#endregion
-//#region api/PaymentRequestsApi.d.ts
-type CreateIncomingPaymentRequestInput = Omit<CreatePaymentRequestReceiveInput, 'amount' | 'unit'> & {
-  /** Amount to request. Bare amounts use `sat` unless `unit` is set. */amount: UnitAmountLike; /** Unit to request. */
-  unit?: string;
-};
-interface IncomingPaymentRequestsApi {
-  create(input: CreateIncomingPaymentRequestInput): Promise<PaymentRequestReceiveOperation>;
-  cancel(operationId: string, reason?: string): Promise<PaymentRequestReceiveOperation>;
-  get(operationId: string): Promise<PaymentRequestReceiveOperation | null>;
-  list(filter?: {
-    state?: PaymentRequestReceiveState;
-  }): Promise<PaymentRequestReceiveOperation[]>;
-  claimPayload(operationOrId: PaymentRequestReceiveOperation | string, payload: PaymentRequestPayload | string, source?: PaymentRequestReceiveSource): Promise<PaymentRequestReceiveClaimResult>;
-  ingestPayload(payload: PaymentRequestPayload | string, source?: PaymentRequestReceiveSource): Promise<PaymentRequestReceiveClaimResult>;
-  readonly recovery: {
-    run(): Promise<void>;
-  };
-  readonly diagnostics: {
-    isLocked(operationId: string): boolean;
-  };
-}
-/**
- * API for parsing, preparing, and executing payment requests.
- */
-declare class PaymentRequestsApi {
-  private readonly paymentRequestService;
-  readonly incoming: IncomingPaymentRequestsApi;
-  constructor(paymentRequestService: PaymentRequestService, paymentRequestReceiveService: PaymentRequestReceiveService);
+declare class SubscriptionManager {
+  private readonly nextIdByMint;
+  private readonly subscriptions;
+  private readonly activeByMint;
+  private readonly pendingSubscribeByMint;
+  private readonly transportByMint;
+  private readonly logger?;
+  private readonly messageHandlerByMint;
+  private readonly openHandlerByMint;
+  private readonly hasOpenedByMint;
+  private readonly wsFactory?;
+  private readonly mintAdapter;
+  private readonly options;
+  private paused;
+  constructor(wsFactoryOrManager: WebSocketFactory | RealTimeTransport, mintAdapter: MintAdapter, logger?: Logger, options?: SubscriptionManagerOptions);
   /**
-   * Parse and validate an encoded payment request.
+   * Get or create a transport for a mint.
+   *
+   * Uses HybridTransport (WS + polling in parallel) when a wsFactory is available.
+   * HybridTransport handles WS failures gracefully by speeding up polling, so we
+   * don't need to check mint capabilities or WebSocket availability upfront.
+   *
+   * Falls back to pure PollingTransport only when no wsFactory is provided.
    */
-  parse(paymentRequest: string): Promise<ResolvedPaymentRequest>;
-  /**
-   * Prepare a payment request for execution.
-   */
-  prepare(request: ResolvedPaymentRequest, options: {
-    mintUrl: string;
-    amount?: UnitAmountLike;
-  }): Promise<PreparedPaymentRequest>;
-  /**
-   * Execute a prepared payment request.
-   */
-  execute(transaction: PreparedPaymentRequest): Promise<PaymentRequestExecutionResult>;
+  private getTransport;
+  private getNextId;
+  private ensureMessageListener;
+  subscribe<TPayload = unknown>(mintUrl: string, kind: SubscriptionKind, filters: string[], onNotification?: SubscriptionCallback<TPayload>): Promise<{
+    subId: string;
+    unsubscribe: UnsubscribeHandler;
+  }>;
+  addCallback<TPayload = unknown>(subId: string, cb: SubscriptionCallback<TPayload>): void;
+  removeCallback<TPayload = unknown>(subId: string, cb: SubscriptionCallback<TPayload>): void;
+  unsubscribe(mintUrl: string, subId: string): Promise<void>;
+  closeAll(): void;
+  closeMint(mintUrl: string): void;
+  private reSubscribeMint;
+  pause(): void;
+  resume(): void;
 }
 //#endregion
 //#region plugins/types.d.ts
@@ -4079,178 +3001,20 @@ interface Plugin<Req extends readonly ServiceKey[] = readonly ServiceKey[]> {
  * }
  */
 interface PluginExtensions {}
-//#endregion
-//#region Manager.d.ts
 /**
- * Configuration options for initializing the Coco Cashu manager
+ * Error thrown when a plugin attempts to register an extension key that is already registered.
  */
-interface CocoConfig {
-  /** Repository implementations for data persistence */
-  repo: Repositories;
-  /** Function that returns the wallet seed as Uint8Array */
-  seedGetter: () => Promise<Uint8Array>;
-  /** Optional logger instance (defaults to NullLogger) */
-  logger?: Logger;
-  /** Optional WebSocket factory for real-time subscriptions */
-  webSocketFactory?: WebSocketFactory;
-  /** Optional plugins to extend functionality */
-  plugins?: Plugin[];
-  /**
-   * Watcher configuration (all enabled by default)
-   * - Omit to use defaults (enabled)
-   * - Set `disabled: true` to disable
-   * - Provide options to customize behavior
-   */
-  watchers?: {
-    /** Mint operation watcher (enabled by default) */mintOperationWatcher?: {
-      disabled?: boolean;
-      watchExistingPendingOnStart?: boolean;
-      watchExistingPendingQuotesOnStart?: boolean;
-    }; /** Proof state watcher (enabled by default) */
-    proofStateWatcher?: {
-      disabled?: boolean; /** When enabled, scan existing inflight proofs on start (default: true) */
-      watchExistingInflightOnStart?: boolean;
-    };
-  };
-  /**
-   * Processor configuration (all enabled by default)
-   * - Omit to use defaults (enabled)
-   * - Set `disabled: true` to disable
-   * - Provide options to customize behavior
-   */
-  processors?: {
-    /** Mint operation processor (enabled by default) */mintOperationProcessor?: {
-      disabled?: boolean;
-      processIntervalMs?: number;
-      maxRetries?: number;
-      baseRetryDelayMs?: number;
-      initialEnqueueDelayMs?: number;
-      autoClaimMintQuotes?: boolean;
-    };
-  };
-  /**
-   * Subscription transport configuration
-   * Controls the hybrid WebSocket + polling behavior
-   */
-  subscriptions?: {
-    /**
-     * Polling interval (ms) while WebSocket is connected.
-     * Only used as backup to catch silent WS failures.
-     * Default: 20000 (20 seconds)
-     */
-    slowPollingIntervalMs?: number;
-    /**
-     * Polling interval (ms) after WebSocket fails.
-     * Used as primary transport when WS is unavailable.
-     * Default: 5000 (5 seconds)
-     */
-    fastPollingIntervalMs?: number;
-  };
+declare class ExtensionRegistrationError extends Error {
+  constructor(pluginName: string, key: string);
 }
 /**
- * Initializes and configures a new Coco Cashu manager instance
- * @param config - Configuration options including repositories, seed, and optional features
- * @returns A fully initialized Manager instance
+ * Error thrown when the same plugin instance is registered more than once.
  */
-declare function initializeCoco(config: CocoConfig): Promise<Manager>;
-declare class Manager {
-  readonly mint: MintApi;
-  readonly wallet: WalletApi;
-  readonly keyring: KeyRingApi;
-  readonly subscription: SubscriptionApi;
-  readonly history: HistoryApi;
-  readonly auth: AuthApi;
-  readonly ops: OpsApi;
-  readonly quotes: QuoteApi;
-  readonly paymentRequests: PaymentRequestsApi;
-  readonly ext: PluginExtensions;
-  private mintService;
-  private walletService;
-  private proofService;
-  private walletRestoreService;
-  private keyRingService;
-  private eventBus;
-  private logger;
-  readonly subscriptions: SubscriptionManager;
-  private mintOperationWatcher?;
-  private mintOperationProcessor?;
-  private legacyMintQuoteRepository;
-  private quoteLifecycle;
-  private proofStateWatcher?;
-  private historyService;
-  private seedService;
-  private counterService;
-  private tokenService;
-  private paymentRequestService;
-  private paymentRequestReceiveService;
-  private authSessionService;
-  private authService;
-  private sendOperationService;
-  private sendOperationRepository;
-  private meltOperationService;
-  private meltOperationRepository;
-  private mintOperationService;
-  private mintOperationRepository;
-  private receiveOperationService;
-  private receiveOperationRepository;
-  private paymentRequestReceiveOperationRepository;
-  private paymentRequestReceiveAttemptRepository;
-  private proofRepository;
-  private readonly pluginHost;
-  private subscriptionsPaused;
-  private originalWatcherConfig;
-  private originalProcessorConfig;
-  private readonly mintRequestProvider;
-  private readonly mintAdapter;
-  private disposed;
-  private disposePromise?;
-  constructor(repositories: Repositories, seedGetter: () => Promise<Uint8Array>, logger?: Logger, webSocketFactory?: WebSocketFactory, plugins?: Plugin[], watchers?: CocoConfig['watchers'], processors?: CocoConfig['processors'], subscriptions?: CocoConfig['subscriptions']);
-  on<E extends keyof CoreEvents>(event: E, handler: (payload: CoreEvents[E]) => void | Promise<void>): () => void;
-  once<E extends keyof CoreEvents>(event: E, handler: (payload: CoreEvents[E]) => void | Promise<void>): () => void;
-  use(plugin: Plugin): void;
-  /**
-   * Initialize the plugin system.
-   * This is called automatically by `initializeCoco()`.
-   * Only call this directly if you instantiate Manager without using the factory.
-   */
-  initPlugins(): Promise<void>;
-  dispose(): Promise<void>;
-  private disposeOwnedResources;
-  off<E extends keyof CoreEvents>(event: E, handler: (payload: CoreEvents[E]) => void | Promise<void>): void;
-  enableMintOperationWatcher(options?: {
-    watchExistingPendingOnStart?: boolean;
-    watchExistingPendingQuotesOnStart?: boolean;
-  }): Promise<void>;
-  disableMintOperationWatcher(): Promise<void>;
-  enableMintOperationProcessor(options?: {
-    processIntervalMs?: number;
-    maxRetries?: number;
-    baseRetryDelayMs?: number;
-    initialEnqueueDelayMs?: number;
-    autoClaimMintQuotes?: boolean;
-  }): Promise<boolean>;
-  disableMintOperationProcessor(): Promise<void>;
-  waitForMintOperationProcessor(): Promise<void>;
-  enableProofStateWatcher(options?: {
-    watchExistingInflightOnStart?: boolean;
-  }): Promise<void>;
-  disableProofStateWatcher(): Promise<void>;
-  recoverPendingMintOperations(): Promise<void>;
-  recoverPendingPaymentRequestReceiveAttempts(): Promise<void>;
-  reconcileLegacyMintQuotes(mintUrl?: string): Promise<{
-    reconciled: string[];
-    skipped: string[];
-  }>;
-  pauseSubscriptions(): Promise<void>;
-  resumeSubscriptions(): Promise<void>;
-  private getChildLogger;
-  requeuePaidMintQuotes(mintUrl?: string): Promise<{
-    requeued: string[];
-  }>;
-  private createEventBus;
-  private createSubscriptionManager;
-  private buildCoreServices;
-  private buildApis;
+declare class DuplicatePluginRegistrationError extends Error {
+  constructor(pluginName: string);
 }
 //#endregion
-export { Amount, type AmountLike, AuthApi, AuthSession, AuthSessionError, AuthSessionExpiredError, type BalanceBreakdown, type BalanceQuery, type BalanceSnapshot, type BalancesBreakdownByMint, type BalancesByMint, type BalancesByMintAndUnit, type BalancesByUnit, Bolt11MintQuote, Bolt12MintQuote, BoltMeltQuote, CocoConfig, ConsoleLogger, type CoreEvents, type CoreProof, Counter, CreateIncomingPaymentRequestInput, CreateMeltQuoteInput, CreateMintQuoteInput, DEFAULT_UNIT, DefaultSupportedMeltMethod, DefaultSupportedMintMethod, DefaultSupportedMintQuoteMethod, type EventHandler, type ExecutingMeltOperation, type ExecutingMintOperation, type ExecutingReceiveOperation, type ExecutingSendOperation, type FailedMeltOperation, type FailedMintOperation, type FinalizedMeltOperation, type FinalizedMintOperation, type FinalizedReceiveOperation, type FinalizedSendOperation, HistoryApi, HistoryEntry, HistoryType, HttpResponseError, ImportMintQuoteInput, IncomingPaymentRequestsApi, type InitMeltOperation, type InitMintOperation, type InitReceiveOperation, type InitSendOperation, KeyRingApi, Keypair, KeypairPurpose, Keyset, KeysetKeypairs, KeysetSyncError, LegacyHistoryEntry, LegacyHistoryRowInput, LegacyMeltHistoryEntry, LegacyMeltHistoryState, LegacyMintHistoryEntry, LegacyMintHistoryState, LegacyReceiveHistoryEntry, LegacyReceiveHistoryState, LegacySendHistoryEntry, LegacySendHistoryState, ListPendingMeltQuotesInput, ListPendingMintQuotesInput, type Logger, Manager, MeltDiagnosticsApi, MeltHistoryEntry, MeltHistoryState, type MeltMethod, type MeltMethodData, type MeltMethodFinalizedData, type MeltMethodInputData, type MeltMethodQuoteSnapshot, type MeltMethodRemoteState, type MeltOperation, type MeltOperationState, MeltOpsApi, MeltQuote, MeltQuoteApi, MeltQuoteRef, MeltRecoveryApi, MemoryRepositories, Mint, MintApi, MintDiagnosticsApi, MintFetchError, MintHistoryEntry, MintHistoryState, type MintMethod, type MintMethodCreateQuoteData, type MintMethodData, type MintMethodQuoteData, type MintMethodQuoteSnapshot, type MintMethodRemoteState, type MintOperation, MintOperationError, type MintOperationFailure, type MintOperationState, MintOpsApi, MintQuote, MintQuoteApi, MintQuoteOnchainResponse, MintQuoteRef, MintQuoteState, MintRecoveryApi, NetworkError, OnchainMeltQuote, OnchainMintQuote, OperationHistoryEntry, OperationInProgressError, OpsApi, type ParsedPaymentRequestPayload, PaymentRequestError, type PaymentRequestReceiveAttempt, type PaymentRequestReceiveAttemptState, type PaymentRequestReceiveOperation, type PaymentRequestReceiveSource, type PaymentRequestReceiveState, type PaymentRequestReceiveTransport, PaymentRequestsApi, type PendingMeltOperation, type PendingMintOperation, type PendingSendOperation, PrepareMeltInput, PrepareMintInput, PrepareReceiveInput, PrepareSendInput, type PreparedMeltOperation, type PreparedReceiveOperation, type PreparedSendOperation, ProofOperationError, type ProofState, ProofValidationError, QuoteApi, QuoteIdentity, QuoteIdentityConflictError, ReceiveDiagnosticsApi, ReceiveHistoryEntry, ReceiveHistoryState, type ReceiveOperation, type ReceiveOperationSource, type ReceiveOperationState, ReceiveOpsApi, ReceiveRecoveryApi, type RolledBackMeltOperation, type RolledBackReceiveOperation, type RolledBackSendOperation, type RollingBackMeltOperation, type RollingBackSendOperation, SendDiagnosticsApi, SendHistoryEntry, SendHistoryState, type SendMethod, type SendMethodData, type SendOperation, type SendOperationState, SendOpsApi, SendRecoveryApi, SendTarget, SubscriptionApi, type TerminalMeltOperation, type TerminalMintOperation, type TerminalReceiveOperation, type TerminalSendOperation, TokenValidationError, UnitAmount, UnitAmountLike, UnitMismatchError, UnitValidationError, UnknownMintError, WalletApi, WalletBalancesApi, WalletRestoreOptions, WalletSweepOptions, type WebSocketFactory, type WebSocketLike, assertSameUnit, assertUnitAmount, compareHistoryEntries, deserializeAmount, deserializeToken, getDecodedToken, getEncodedToken, getMintQuoteAmount, getMintQuoteAvailableAmount, getMintQuoteRemoteState, getTokenMetadata, initializeCoco, isLegacyHistoryEntry, isMintQuotePending, isOperationHistoryEntry, isStatefulMintQuote, isUnitAmountLikeObject, legacyHistoryId, meltQuoteFromBolt11Response, meltQuoteFromBolt12Response, meltQuoteFromOnchainResponse, meltQuoteToMethodSnapshot, mintQuoteFromBolt11Response, mintQuoteFromBolt12Response, mintQuoteFromOnchainResponse, mintQuoteToMethodSnapshot, normalizeMeltMethodData, normalizeMintUrl, normalizeUnit, normalizeUnitAmount, normalizeUnitList, operationHistoryId, parseHistoryEntryId, parseUnitAmount, projectLegacyHistoryRow, projectMeltOperation, projectMintOperation, projectOperationToHistoryEntry, projectReceiveOperation, projectSendOperation, resolveOnchainMeltFeeOption, sameUnitAmount, serializeAmount, stringifyJson, sumAmounts, toAmount };
+//#region plugin.d.ts
+type PluginEventBus = ServiceMap['eventBus'];
+//#endregion
+export { type Cleanup, type CleanupFn, DuplicatePluginRegistrationError, ExtensionRegistrationError, type Plugin, type PluginContext, PluginEventBus, type PluginExtensions, type ServiceKey, type ServiceMap };
