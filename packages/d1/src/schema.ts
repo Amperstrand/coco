@@ -400,7 +400,19 @@ export async function ensureSchema(db: D1Db): Promise<void> {
 
   if (existing) return;
 
-  await db.exec(SCHEMA_SQL);
+  // workerd's local D1 exec() splits scripts on newlines and SQL -- line
+  // comments then swallow the collapsed statements; exec one statement at a
+  // time with comment lines stripped. Mirrors the vendored fix in
+  // silent.energy and keeps fresh test databases initializing.
+  for (const stmt of SCHEMA_SQL.split(';')) {
+    const sql = stmt
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (sql) await db.exec(sql + ';');
+  }
 
   await db.run('INSERT INTO coco_cashu_migrations (id, appliedAt) VALUES (?, ?)', [
     MIGRATION_ID,

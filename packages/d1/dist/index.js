@@ -436,7 +436,10 @@ async function ensureSchema(db) {
 		existing = await db.get("SELECT id FROM coco_cashu_migrations WHERE id = ?", [MIGRATION_ID]);
 	} catch {}
 	if (existing) return;
-	await db.exec(SCHEMA_SQL);
+	for (const stmt of SCHEMA_SQL.split(";")) {
+		const sql = stmt.split("\n").filter((line) => !line.trim().startsWith("--")).join(" ").replace(/\s+/g, " ").trim();
+		if (sql) await db.exec(sql + ";");
+	}
 	await db.run("INSERT INTO coco_cashu_migrations (id, appliedAt) VALUES (?, ?)", [MIGRATION_ID, getUnixTimeSeconds()]);
 }
 
