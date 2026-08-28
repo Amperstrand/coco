@@ -6421,6 +6421,13 @@ var MintAdapter = class {
 	async checkMeltQuote(mintUrl, quoteId) {
 		return await this.getCashuMint(mintUrl).checkMeltQuoteBolt11(quoteId);
 	}
+	/**
+	* Check the current state of a melt quote for any payment method, including
+	* custom methods registered via declaration merging.
+	*/
+	async checkMeltQuoteFor(mintUrl, method, quoteId) {
+		return this.getCashuMint(mintUrl).checkMeltQuote(method, quoteId);
+	}
 	async checkMeltQuoteBolt12(mintUrl, quoteId) {
 		return await this.getCashuMint(mintUrl).checkMeltQuoteBolt12(quoteId);
 	}

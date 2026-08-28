@@ -721,6 +721,11 @@ declare class MintAdapter {
   /** Send one NUT-29 mint-quote batch check through the shared auth and rate-limit boundary. */
   checkMintQuoteBatch<M extends MintMethod>(mintUrl: string, method: M, quoteIds: string[]): Promise<NormalizedMintQuoteSnapshot<M>[]>;
   checkMeltQuote(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt11Response>;
+  /**
+   * Check the current state of a melt quote for any payment method, including
+   * custom methods registered via declaration merging.
+   */
+  checkMeltQuoteFor<M extends MeltMethod>(mintUrl: string, method: M, quoteId: string): Promise<MeltMethodQuoteSnapshot<M>>;
   checkMeltQuoteBolt12(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt12Response>;
   checkMeltQuoteOnchain(mintUrl: string, quoteId: string): Promise<MeltQuoteOnchainResponse>;
   checkMeltQuoteState(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt11Response['state']>;

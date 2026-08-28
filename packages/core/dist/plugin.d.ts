@@ -1,3 +1,3 @@
-import "./index-CmV2zlxY.js";
-import { a as ExtensionRegistrationError, c as PluginExtensions, i as DuplicatePluginRegistrationError, l as ServiceKey, n as Cleanup, o as Plugin, r as CleanupFn, s as PluginContext, t as PluginEventBus, u as ServiceMap } from "./plugin-DK4SuMf7.js";
+import "./index-D052TvYi.js";
+import { a as ExtensionRegistrationError, c as PluginExtensions, i as DuplicatePluginRegistrationError, l as ServiceKey, n as Cleanup, o as Plugin, r as CleanupFn, s as PluginContext, t as PluginEventBus, u as ServiceMap } from "./plugin-Cmp8iH0N.js";
 export { Cleanup, CleanupFn, DuplicatePluginRegistrationError, ExtensionRegistrationError, Plugin, PluginContext, PluginEventBus, PluginExtensions, ServiceKey, ServiceMap };
