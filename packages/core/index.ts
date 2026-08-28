@@ -122,3 +122,8 @@ export {
 export type { OutputDataCreator, OutputDataLike } from '@cashu/cashu-ts';
 export type { WebSocketLike, WebSocketFactory } from './infra/WsConnectionManager.ts';
 export { normalizeMintUrl, toAmount, sumAmounts } from './utils.ts';
+export {
+  serializeOutputData,
+  deserializeOutputData,
+  mapProofToCoreProof,
+} from './utils.ts';
