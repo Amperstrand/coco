@@ -1,6 +1,6 @@
 {
   "name": "@cashu/coco-indexeddb",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -38,6 +38,6 @@
   "peerDependencies": {
     "@cashu/cashu-ts": "5.0.0-rc.4",
     "typescript": "^5",
-    "@cashu/coco-core": "1.0.0"
+    "@cashu/coco-core": "^1.0.1"
   }
 }
