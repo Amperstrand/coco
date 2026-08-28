@@ -17,6 +17,15 @@ export type { CoreEvents } from './events/types.ts';
 export type { EventHandler } from './events/EventBus.ts';
 export { type Logger, ConsoleLogger } from './logging/index.ts';
 export { MemoryRepositories } from './repositories/memory/MemoryRepositories.ts';
+export { MintHandlerProvider } from './infra/handlers/mint/MintHandlerProvider.ts';
+export { MeltHandlerProvider } from './infra/handlers/melt/MeltHandlerProvider.ts';
+export {
+  BaseQuoteMeltHandler,
+  type BoltMeltQuoteState,
+  type QuoteMeltResponse,
+} from './infra/handlers/melt/BaseQuoteMeltHandler.ts';
+export type { MintMethodHandler } from './operations/mint/MintMethodHandler.ts';
+export type { MeltMethodHandler } from './operations/melt/MeltMethodHandler.ts';
 export type {
   DefaultSendMethodData,
   P2pkSendMethodData,

@@ -54,6 +54,8 @@ import {
   MintOnchainHandler,
   PaymentRequestReceiveTransportHandlerProvider,
 } from './infra';
+import type { MintMethod, MintMethodHandler } from './operations/mint/MintMethodHandler';
+import type { MeltMethod, MeltMethodHandler } from './operations/melt/MeltMethodHandler';
 import { EventBus, type CoreEvents } from './events';
 import { type Logger, NullLogger } from './logging';
 import {
@@ -295,6 +297,8 @@ export class Manager {
   private meltSettlementProcessor?: MeltSettlementProcessor;
   private legacyMintQuoteRepository: LegacyMintQuoteRepository;
   private quoteLifecycle: QuoteLifecycle;
+  private mintHandlerProvider: MintHandlerProvider;
+  private meltHandlerProvider: MeltHandlerProvider;
   private proofStateWatcher?: ProofStateWatcherService;
   private historyService: HistoryService;
   private seedService: SeedService;
@@ -375,6 +379,8 @@ export class Manager {
     this.meltOperationService = core.meltOperationService;
     this.meltOperationRepository = core.meltOperationRepository;
     this.quoteLifecycle = core.quoteLifecycle;
+    this.mintHandlerProvider = core.mintHandlerProvider;
+    this.meltHandlerProvider = core.meltHandlerProvider;
     this.authSessionService = core.authSessionService;
     this.authService = core.authService;
     this.mintOperationService = core.mintOperationService;
@@ -455,6 +461,32 @@ export class Manager {
     };
     await this.pluginHost.init(services);
     await this.pluginHost.ready();
+  }
+
+  /**
+   * Register a custom payment-method handler for a mint (deposit) method.
+   *
+   * Custom methods beyond the built-ins (`bolt11`, `bolt12`, `onchain`) must be
+   * added to the method registries via declaration merging on
+   * `MintMethodDefinitions` / `MintMethodInputDefinitions` before handlers can
+   * be typed against them. Registration can happen at any time: quote and
+   * operation services resolve handlers per call.
+   */
+  registerMintMethod<M extends MintMethod>(method: M, handler: MintMethodHandler<M>): void {
+    this.mintHandlerProvider.register(method, handler);
+  }
+
+  /**
+   * Register a custom payment-method handler for a melt (withdraw) method.
+   *
+   * Custom methods beyond the built-ins (`bolt11`, `bolt12`, `onchain`) must be
+   * added to the method registries via declaration merging on
+   * `MeltMethodDefinitions` / `MeltMethodInputDefinitions` before handlers can
+   * be typed against them. Registration can happen at any time: quote and
+   * operation services resolve handlers per call.
+   */
+  registerMeltMethod<M extends MeltMethod>(method: M, handler: MeltMethodHandler<M>): void {
+    this.meltHandlerProvider.register(method, handler);
   }
 
   async dispose(): Promise<void> {
@@ -899,6 +931,8 @@ export class Manager {
     authService: AuthService;
     mintOperationService: MintOperationService;
     mintOperationRepository: MintOperationRepository;
+    mintHandlerProvider: MintHandlerProvider;
+    meltHandlerProvider: MeltHandlerProvider;
   } {
     const mintLogger = this.getChildLogger('MintService');
     const walletLogger = this.getChildLogger('WalletService');
@@ -1120,6 +1154,8 @@ export class Manager {
       authService,
       mintOperationService,
       mintOperationRepository,
+      mintHandlerProvider,
+      meltHandlerProvider,
     };
   }
 

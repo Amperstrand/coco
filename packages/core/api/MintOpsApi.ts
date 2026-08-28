@@ -8,8 +8,12 @@ import type {
 } from '@core/operations/mint';
 import type { MintQuoteRef, QuoteIdentity } from '../models/QuoteIdentity.ts';
 
-/** Mint methods supported by the default `Manager` wiring. */
-export type DefaultSupportedMintMethod = 'bolt11' | 'onchain' | 'bolt12';
+/**
+ * Mint methods supported by the default `Manager` wiring. Extensible via
+ * declaration merging on `MintMethodDefinitions`; custom handlers must be
+ * registered with `manager.registerMintMethod()` before use.
+ */
+export type DefaultSupportedMintMethod = MintMethod;
 
 export type PrepareMintInput<TSupported extends MintMethod = DefaultSupportedMintMethod> = {
   /** Existing canonical mint quote or structural quote reference. */

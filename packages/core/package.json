@@ -27,6 +27,14 @@
     "./adapter": {
       "types": "./dist/adapter.d.ts",
       "import": "./dist/adapter.js"
+    },
+    "./operations/melt": {
+      "types": "./dist/operations/melt/index.d.ts",
+      "import": "./dist/operations/melt/index.js"
+    },
+    "./operations/mint": {
+      "types": "./dist/operations/mint/index.d.ts",
+      "import": "./dist/operations/mint/index.js"
     }
   },
   "files": [
@@ -40,6 +48,12 @@
       ],
       "plugin": [
         "dist/plugin.d.ts"
+      ],
+      "operations/melt": [
+        "dist/operations/melt/index.d.ts"
+      ],
+      "operations/mint": [
+        "dist/operations/mint/index.d.ts"
       ]
     }
   },

@@ -7,8 +7,12 @@ import type {
 import type { MeltMethod, MeltOperationService } from '@core/operations/melt';
 import type { MeltQuoteRef, QuoteIdentity } from '../models/QuoteIdentity.ts';
 
-/** Melt methods supported by the default `Manager` wiring. */
-export type DefaultSupportedMeltMethod = 'bolt11' | 'bolt12' | 'onchain';
+/**
+ * Melt methods supported by the default `Manager` wiring. Extensible via
+ * declaration merging on `MeltMethodDefinitions`; custom handlers must be
+ * registered with `manager.registerMeltMethod()` before use.
+ */
+export type DefaultSupportedMeltMethod = MeltMethod;
 
 export type PrepareMeltInput<TSupported extends MeltMethod = DefaultSupportedMeltMethod> = {
   [M in TSupported]: {

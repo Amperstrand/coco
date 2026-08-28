@@ -1,5 +1,5 @@
 import type { MeltMethodInputData } from '@core/operations/melt';
-import type { MintMethodQuoteImportSnapshot } from '@core/operations/mint';
+import type { MintMethod, MintMethodQuoteImportSnapshot } from '@core/operations/mint';
 import { DEFAULT_UNIT, normalizeUnit, parseUnitAmount, type UnitAmountLike } from '../amounts.ts';
 import type { MeltQuote } from '../models/MeltQuote';
 import type { MintQuote } from '../models/MintQuote';
@@ -7,7 +7,14 @@ import type { QuoteIdentity } from '../models/QuoteIdentity';
 import type { QuoteLifecycle } from '../quotes/QuoteLifecycle';
 import type { DefaultSupportedMeltMethod } from './MeltOpsApi.ts';
 
-export type DefaultSupportedMintQuoteMethod = 'bolt11' | 'onchain' | 'bolt12';
+/**
+ * Mint quote methods supported by the default `Manager` wiring. Extensible via
+ * declaration merging on `MintMethodDefinitions`; custom handlers must be
+ * registered with `manager.registerMintMethod()` before use.
+ */
+export type DefaultSupportedMintQuoteMethod = MintMethod;
+
+type BuiltinMintQuoteMethod = 'bolt11' | 'onchain' | 'bolt12';
 
 export type CreateMintQuoteInput =
   | {
@@ -29,6 +36,15 @@ export type CreateMintQuoteInput =
       unit?: string;
       amount?: UnitAmountLike;
       description?: string;
+    }
+  | {
+      mintUrl: string;
+      method: Exclude<MintMethod, BuiltinMintQuoteMethod>;
+      amount: UnitAmountLike;
+      unit?: string;
+      description?: string;
+      /** Create a NUT-20 quote locked to a fresh, persisted wallet key. */
+      locked?: boolean;
     };
 
 export type ImportMintQuoteInput = {
@@ -84,9 +100,35 @@ export class MintQuoteApi {
       return this.quoteLifecycle.createMintQuote(input.mintUrl, input.method, createQuoteData);
     }
 
-    return this.quoteLifecycle.createMintQuote(input.mintUrl, input.method, {
-      unit: normalizeUnit(input.unit, { defaultUnit: DEFAULT_UNIT }),
-    });
+    if (input.method === 'onchain') {
+      return this.quoteLifecycle.createMintQuote(input.mintUrl, input.method, {
+        unit: normalizeUnit(input.unit, { defaultUnit: DEFAULT_UNIT }),
+      });
+    }
+
+    const custom = input as {
+      mintUrl: string;
+      method: MintMethod;
+      amount: UnitAmountLike;
+      unit?: string;
+      description?: string;
+      locked?: boolean;
+    };
+    const parsed = parseUnitAmount(custom.amount, { explicitUnit: custom.unit });
+    const createQuoteData: {
+      amount: ReturnType<typeof parseUnitAmount>;
+      description?: string;
+      locked?: boolean;
+    } = {
+      amount: parsed,
+      ...(custom.description !== undefined ? { description: custom.description } : {}),
+      ...(custom.locked === true ? { locked: true } : {}),
+    };
+    return this.quoteLifecycle.createMintQuote<MintMethod>(
+      custom.mintUrl,
+      custom.method,
+      createQuoteData,
+    );
   }
 
   get(input: QuoteIdentity): Promise<MintQuote | null> {
