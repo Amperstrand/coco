@@ -6426,7 +6426,7 @@ var MintAdapter = class {
 	* custom methods registered via declaration merging.
 	*/
 	async checkMeltQuoteFor(mintUrl, method, quoteId) {
-		return this.getCashuMint(mintUrl).checkMeltQuote(method, quoteId);
+		return await this.getCashuMint(mintUrl).checkMeltQuote(method, quoteId);
 	}
 	async checkMeltQuoteBolt12(mintUrl, quoteId) {
 		return await this.getCashuMint(mintUrl).checkMeltQuoteBolt12(quoteId);

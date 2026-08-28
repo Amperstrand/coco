@@ -4,6 +4,7 @@ import {
   type Keys,
   type OutputDataLike,
   type Proof,
+  type MeltQuoteBaseResponse,
   type MeltQuoteBolt11Response,
   type MeltQuoteBolt12Response,
   type MeltQuoteOnchainResponse,
@@ -122,7 +123,8 @@ export class MintAdapter {
     quoteId: string,
   ): Promise<MeltMethodQuoteSnapshot<M>> {
     const cashuMint = this.getCashuMint(mintUrl);
-    return cashuMint.checkMeltQuote<MeltMethodQuoteSnapshot<M>>(method, quoteId);
+    const response = await cashuMint.checkMeltQuote<MeltQuoteBaseResponse>(method, quoteId);
+    return response as MeltMethodQuoteSnapshot<M>;
   }
 
   // Check current state of a bolt12 melt quote (returns full response including change)
