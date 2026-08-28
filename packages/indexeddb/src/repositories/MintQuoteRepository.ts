@@ -66,7 +66,7 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
   const state = deriveBolt11MintQuoteState(amountPaid, amountIssued);
   return {
     mintUrl: row.mintUrl,
-    method: 'bolt11',
+    method: row.method,
     quoteId: row.quoteId,
     quote: row.quoteId,
     state,
@@ -82,7 +82,7 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
     quoteData: { amount },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-  };
+  } as MintQuote;
 }
 
 function serializeQuoteData(quote: MintQuote): string {
