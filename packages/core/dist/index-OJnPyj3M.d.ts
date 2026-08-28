@@ -695,7 +695,9 @@ interface MintMethodHandler<M extends MintMethod = MintMethod> {
 type MintMethodHandlerRegistry = { [M in MintMethod]: MintMethodHandler<M> };
 //#endregion
 //#region infra/MintAdapter.d.ts
-type NormalizedMintQuoteSnapshot<M extends MintMethod> = M extends 'bolt11' ? MintQuoteBolt11Response : M extends 'bolt12' ? MintQuoteBolt12Response : MintQuoteOnchainResponse;
+type NormalizedMintQuoteSnapshot<M extends MintMethod> = M extends 'bolt11' ? MintQuoteBolt11Response : M extends 'bolt12' ? MintQuoteBolt12Response : M extends 'onchain' ? MintQuoteOnchainResponse : MintQuoteBaseResponse & {
+  amount?: AmountLike;
+};
 /**
  * Adapter for making HTTP requests to Cashu mints.
  *

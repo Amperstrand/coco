@@ -1,11 +1,13 @@
 import {
   Mint,
+  type AmountLike,
   type CheckStatePayload,
   type Keys,
   type OutputDataLike,
   type Proof,
   type MeltQuoteBaseResponse,
   type MeltQuoteBolt11Response,
+  type MintQuoteBaseResponse,
   type MeltQuoteBolt12Response,
   type MeltQuoteOnchainResponse,
   type MintQuoteBolt11Response,
@@ -24,7 +26,9 @@ type NormalizedMintQuoteSnapshot<M extends MintMethod> = M extends 'bolt11'
   ? MintQuoteBolt11Response
   : M extends 'bolt12'
     ? MintQuoteBolt12Response
-    : MintQuoteOnchainResponse;
+    : M extends 'onchain'
+      ? MintQuoteOnchainResponse
+      : MintQuoteBaseResponse & { amount?: AmountLike };
 
 /**
  * Adapter for making HTTP requests to Cashu mints.
