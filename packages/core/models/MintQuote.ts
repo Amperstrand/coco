@@ -69,16 +69,24 @@ export type Bolt12MintQuote = MintQuoteBase<'bolt12'> & {
   reusable: true;
 };
 
+export type StatefulMintQuoteShape<M extends MintMethod = MintMethod> = MintQuoteBase<M> & {
+  amount: Amount;
+  state: MintMethodRemoteState<M>;
+  reusable: false;
+};
+
+export type StatefulMintQuote = Extract<MintQuote, { reusable: false }>;
+
 export type MintQuote<M extends MintMethod = MintMethod> = M extends 'bolt11'
   ? Bolt11MintQuote
   : M extends 'onchain'
     ? OnchainMintQuote
     : M extends 'bolt12'
       ? Bolt12MintQuote
-      : never;
+      : StatefulMintQuoteShape<M>;
 
-export function isStatefulMintQuote(quote: MintQuote): quote is MintQuote<'bolt11'> {
-  return quote.method === 'bolt11';
+export function isStatefulMintQuote(quote: MintQuote): quote is StatefulMintQuote {
+  return quote.method !== 'onchain' && quote.method !== 'bolt12';
 }
 
 /** Derives the deprecated BOLT11 state projection from canonical quote accounting. */
@@ -99,10 +107,10 @@ export function deriveBolt11MintQuoteState(
  * @deprecated Legacy state is a fallback for snapshots that do not carry Mint Quote Accounting.
  */
 export function applyBolt11MintQuoteStateFallback(
-  quote: MintQuote<'bolt11'>,
-  state: MintMethodRemoteState<'bolt11'>,
+  quote: StatefulMintQuote,
+  state: MintMethodRemoteState,
   observedAt = Date.now(),
-): MintQuote<'bolt11'> {
+): StatefulMintQuote {
   const hasLegacyProjectionShape =
     (quote.amountPaid.isZero() && quote.amountIssued.isZero()) ||
     (quote.amountPaid.equals(quote.amount) && quote.amountIssued.isZero()) ||

@@ -132,7 +132,7 @@ function assessMintQuoteClaimability(quote, facts = {}) {
 //#endregion
 //#region models/MintQuote.ts
 function isStatefulMintQuote(quote) {
-	return quote.method === "bolt11";
+	return quote.method !== "onchain" && quote.method !== "bolt12";
 }
 /** Derives the deprecated BOLT11 state projection from canonical quote accounting. */
 function deriveBolt11MintQuoteState(amountPaid, amountIssued) {

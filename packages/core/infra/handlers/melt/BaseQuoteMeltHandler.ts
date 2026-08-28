@@ -105,7 +105,7 @@ export abstract class BaseQuoteMeltHandler<M extends MeltMethod> implements Melt
     return this.toCanonicalQuote(ctx.quote.mintUrl, await this.fetchRemoteMeltQuote(ctx));
   }
 
-  private toCanonicalQuote(mintUrl: string, quote: MeltMethodQuoteSnapshot<M>): MeltQuote<M> {
+  protected toCanonicalQuote(mintUrl: string, quote: MeltMethodQuoteSnapshot<M>): MeltQuote<M> {
     switch (this.method) {
       case 'bolt11':
         return meltQuoteFromBolt11Response(

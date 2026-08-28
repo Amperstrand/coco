@@ -33,7 +33,7 @@ interface MeltQuoteBase<M extends MeltMethod> {
   updatedAt: number;
 }
 
-export interface BoltMeltQuote<M extends BoltMeltMethod = BoltMeltMethod> extends MeltQuoteBase<M> {
+export interface BoltMeltQuote<M extends MeltMethod = MeltMethod> extends MeltQuoteBase<M> {
   fee_reserve: Amount;
   payment_preimage?: string | null;
 }
@@ -45,9 +45,7 @@ export interface OnchainMeltQuote extends MeltQuoteBase<'onchain'> {
 
 export type MeltQuote<M extends MeltMethod = MeltMethod> = M extends 'onchain'
   ? OnchainMeltQuote
-  : M extends BoltMeltMethod
-    ? BoltMeltQuote<M>
-    : never;
+  : BoltMeltQuote<M>;
 
 type BoltMeltQuoteResponse = MeltMethodQuoteSnapshot<'bolt11'> | MeltMethodQuoteSnapshot<'bolt12'>;
 
