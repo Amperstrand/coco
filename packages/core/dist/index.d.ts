@@ -654,7 +654,7 @@ declare class Manager {
   private walletService;
   private proofService;
   private walletRestoreService;
-  private keyRingService;
+  readonly keyRingService: KeyRingService;
   private eventBus;
   private logger;
   readonly subscriptions: SubscriptionManager;

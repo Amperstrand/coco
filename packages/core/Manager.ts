@@ -287,7 +287,7 @@ export class Manager {
   private walletService: WalletService;
   private proofService: ProofService;
   private walletRestoreService: WalletRestoreService;
-  private keyRingService: KeyRingService;
+  readonly keyRingService: KeyRingService;
   private eventBus: EventBus<CoreEvents>;
   private logger: Logger;
   readonly subscriptions: SubscriptionManager;
