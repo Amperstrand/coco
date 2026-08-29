@@ -269,11 +269,11 @@ export function mintQuoteToMethodSnapshot<M extends MintMethod>(
   return {
     quote: quote.quoteId,
     request: quote.request,
-    method: 'bolt12',
+    method: quote.method,
     amount: quote.amount,
     unit: quote.unit,
     expiry: quote.expiry,
-    pubkey: quote.quoteData.pubkey,
+    pubkey: quote.pubkey ?? (quote.quoteData as { pubkey?: string }).pubkey,
     amount_paid: quote.amountPaid,
     amount_issued: quote.amountIssued,
     updated_at: quote.remoteUpdatedAt,
