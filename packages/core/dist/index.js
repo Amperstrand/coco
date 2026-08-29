@@ -4371,8 +4371,8 @@ var MeltQuoteWatcherService = class {
 function toKey$1(mintUrl, method, quoteId) {
 	return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
 }
-function isPendingMeltOperation(operation) {
-	return operation.state === "pending";
+function isSettlementEligibleMeltOperation(operation) {
+	return operation.state === "pending" || operation.state === "executing";
 }
 var MeltSettlementInterestRegistry = class {
 	operationIdsByQuoteKey = /* @__PURE__ */ new Map();
@@ -4464,7 +4464,7 @@ var MeltSettlementProcessor = class {
 		this.running = true;
 		this.logger?.info("MeltSettlementProcessor started");
 		this.offPending = this.bus.on("melt-op:pending", async ({ operation }) => {
-			if (isPendingMeltOperation(operation)) await this.registerOperationInterest(operation);
+			if (isSettlementEligibleMeltOperation(operation)) await this.registerOperationInterest(operation);
 		});
 		this.offQuoteUpdated = this.bus.on("melt-quote:updated", async ({ mintUrl, method, quoteId, quote }) => {
 			const operationIds = this.interests.getOperationIds(mintUrl, method, quoteId);
@@ -4514,7 +4514,7 @@ var MeltSettlementProcessor = class {
 			if (!this.running) return;
 			for (const operation of operations) {
 				if (!this.running) return;
-				if (isPendingMeltOperation(operation)) await this.registerOperationInterest(operation);
+				if (isSettlementEligibleMeltOperation(operation)) await this.registerOperationInterest(operation);
 			}
 		} catch (err) {
 			this.logger?.warn("Failed to initialize pending melt settlement interest", { err });
