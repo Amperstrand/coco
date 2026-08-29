@@ -1470,6 +1470,7 @@ function rowToMintQuote(row) {
 	const amountPaid = deserializeAmount(row.amountPaid);
 	const amountIssued = deserializeAmount(row.amountIssued);
 	const state = deriveBolt11MintQuoteState(amountPaid, amountIssued);
+	const extraQuoteData = quoteData;
 	return {
 		mintUrl: row.mintUrl,
 		method: row.method,
@@ -1485,13 +1486,22 @@ function rowToMintQuote(row) {
 		amountPaid,
 		amountIssued,
 		remoteUpdatedAt: row.remoteUpdatedAt ?? null,
-		quoteData: { amount },
+		quoteData: {
+			...extraQuoteData,
+			amount
+		},
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt
 	};
 }
 function serializeQuoteData(quote) {
-	if (isStatefulMintQuote(quote)) return stringifyJson({ amount: serializeAmount(quote.quoteData.amount) });
+	if (isStatefulMintQuote(quote)) {
+		const data = quote.quoteData;
+		return stringifyJson({
+			...data,
+			amount: serializeAmount(quote.quoteData.amount)
+		});
+	}
 	if (quote.method === "bolt12") {
 		const amount = quote.quoteData.amount ?? quote.amount;
 		return stringifyJson({

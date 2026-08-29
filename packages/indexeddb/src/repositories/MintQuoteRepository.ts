@@ -64,6 +64,9 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
   const amountPaid = deserializeAmount(row.amountPaid);
   const amountIssued = deserializeAmount(row.amountIssued);
   const state = deriveBolt11MintQuoteState(amountPaid, amountIssued);
+  // Custom methods keep extra quoteData fields (e.g. `request`, `expected_sat`)
+  // beyond `amount`; hydrate must round-trip them, not rebuild a bare amount.
+  const extraQuoteData = quoteData as Record<string, unknown>;
   return {
     mintUrl: row.mintUrl,
     method: row.method,
@@ -79,7 +82,7 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
     amountPaid,
     amountIssued,
     remoteUpdatedAt: row.remoteUpdatedAt ?? null,
-    quoteData: { amount },
+    quoteData: { ...extraQuoteData, amount },
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   } as MintQuote;
@@ -87,7 +90,10 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
 
 function serializeQuoteData(quote: MintQuote): string {
   if (isStatefulMintQuote(quote)) {
-    return stringifyJson({ amount: serializeAmount(quote.quoteData.amount) });
+    // Preserve any extra quoteData fields custom methods carry; `amount`
+    // serializes explicitly over the spread.
+    const data = quote.quoteData as unknown as Record<string, unknown>;
+    return stringifyJson({ ...data, amount: serializeAmount(quote.quoteData.amount) });
   }
 
   if (quote.method === 'bolt12') {
