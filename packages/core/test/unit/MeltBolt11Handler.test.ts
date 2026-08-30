@@ -734,6 +734,32 @@ describe('MeltBolt11Handler', () => {
         }
       });
 
+      it('should persist change signatures on the pending operation when PENDING returns change', async () => {
+        const operation = makeExecutingOp('op-1', {
+          needsSwap: false,
+          inputProofSecrets: ['input-1'],
+        });
+
+        const inputProofs = [makeProof('input-1', 112)];
+        (proofRepository.getProofsByOperationId as Mock<any>).mockImplementation(() =>
+          Promise.resolve(inputProofs),
+        );
+        const changeSignatures: SerializedBlindedSignature[] = [
+          { id: keysetId, amount: Amount.from(12), C_: 'C_change' },
+        ];
+        (mintAdapter.customMeltBolt11 as Mock<any>).mockImplementation(() =>
+          Promise.resolve({ state: 'PENDING', change: changeSignatures }),
+        );
+
+        const ctx = buildExecuteContext(operation, inputProofs);
+        const result = await handler.execute(ctx);
+
+        expect(result.status).toBe('PENDING');
+        if (result.status === 'PENDING') {
+          expect(result.pending.pendingChange).toEqual(changeSignatures);
+        }
+      });
+
       it('should restore proofs on UNPAID response', async () => {
         const operation = makeExecutingOp('op-1', {
           needsSwap: false,
@@ -965,6 +991,60 @@ describe('MeltBolt11Handler', () => {
       expect(result).toEqual({
         changeAmount: Amount.from(5),
         effectiveFee: Amount.from(5),
+        finalizedData: { preimage: 'preimage-123' },
+      });
+    });
+
+    it('should claim change persisted on the operation when settlement sources omit it', async () => {
+      const changeSignatures: SerializedBlindedSignature[] = [
+        { id: keysetId, amount: Amount.from(12), C_: 'C_change' },
+      ];
+      const operation = makePendingOp('op-pending-change', {
+        needsSwap: false,
+        inputProofSecrets: ['input-1'],
+        amount: Amount.from(100),
+        inputAmount: Amount.from(112),
+        pendingChange: changeSignatures,
+      });
+      (mintAdapter.checkMeltQuote as Mock<any>).mockImplementation(() =>
+        Promise.resolve({ state: 'PAID', payment_preimage: 'preimage-123' }),
+      );
+
+      const result = await handler.finalize(buildFinalizeContext(operation));
+
+      expect(mintAdapter.checkMeltQuote).toHaveBeenCalledWith(mintUrl, 'quote-123');
+      expect(proofService.setProofState).toHaveBeenCalledWith(mintUrl, ['input-1'], 'spent');
+      expect(proofService.unblindAndSaveChangeProofs).toHaveBeenCalled();
+      expect(result).toEqual({
+        changeAmount: Amount.from(12),
+        effectiveFee: Amount.from(0),
+        finalizedData: { preimage: 'preimage-123' },
+      });
+    });
+
+    it('should prefer live settlement change over operation-persisted change', async () => {
+      const liveChange: SerializedBlindedSignature[] = [
+        { id: keysetId, amount: Amount.from(5), C_: 'C_live' },
+      ];
+      const persistedChange: SerializedBlindedSignature[] = [
+        { id: keysetId, amount: Amount.from(12), C_: 'C_persisted' },
+      ];
+      const operation = makePendingOp('op-pending-change-precedence', {
+        needsSwap: false,
+        inputProofSecrets: ['input-1'],
+        amount: Amount.from(100),
+        inputAmount: Amount.from(112),
+        pendingChange: persistedChange,
+      });
+      (mintAdapter.checkMeltQuote as Mock<any>).mockImplementation(() =>
+        Promise.resolve({ state: 'PAID', change: liveChange, payment_preimage: 'preimage-123' }),
+      );
+
+      const result = await handler.finalize(buildFinalizeContext(operation));
+
+      expect(result).toEqual({
+        changeAmount: Amount.from(5),
+        effectiveFee: Amount.from(7),
         finalizedData: { preimage: 'preimage-123' },
       });
     });
