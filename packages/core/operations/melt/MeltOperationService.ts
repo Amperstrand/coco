@@ -255,6 +255,7 @@ export class MeltOperationService {
     quote: MeltQuote,
     options: { feeIndex?: number } = {},
   ): MeltMethodData {
+    const quoteAmount = quote.amount;
     switch (quote.method) {
       case 'bolt11':
         return { invoice: quote.request };
@@ -264,10 +265,12 @@ export class MeltOperationService {
         const { feeIndex } = resolveOnchainMeltFeeOption(quote, options.feeIndex);
         return {
           address: quote.request,
-          amountSats: quote.amount,
+          amountSats: quoteAmount,
           feeIndex,
         };
       }
+      default:
+        return { amount: quoteAmount } as unknown as MeltMethodData;
     }
   }
 
