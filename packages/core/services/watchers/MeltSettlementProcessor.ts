@@ -2,7 +2,11 @@ import type { EventBus, CoreEvents } from '@core/events';
 import type { MeltQuoteOperationInterest } from '@core/services/watchers/MeltQuoteWatcherService.ts';
 import type { Logger } from '../../logging/Logger.ts';
 import type { MeltOperationService } from '../../operations/melt/MeltOperationService.ts';
-import type { MeltOperation, PendingMeltOperation } from '../../operations/melt/MeltOperation.ts';
+import type {
+  ExecutingMeltOperation,
+  MeltOperation,
+  PendingMeltOperation,
+} from '../../operations/melt/MeltOperation.ts';
 import type { MeltMethod } from '../../operations/melt/MeltMethodHandler.ts';
 import { normalizeMintUrl } from '../../utils.ts';
 
@@ -35,8 +39,10 @@ function toKey(mintUrl: string, method: MeltMethod, quoteId: string): QuoteKey {
   return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
 }
 
-function isPendingMeltOperation(operation: MeltOperation): operation is PendingMeltOperation {
-  return operation.state === 'pending';
+function isSettlementEligibleMeltOperation(
+  operation: MeltOperation,
+): operation is PendingMeltOperation | ExecutingMeltOperation {
+  return operation.state === 'pending' || operation.state === 'executing';
 }
 
 class MeltSettlementInterestRegistry {
@@ -171,7 +177,7 @@ export class MeltSettlementProcessor {
     this.logger?.info('MeltSettlementProcessor started');
 
     this.offPending = this.bus.on('melt-op:pending', async ({ operation }) => {
-      if (isPendingMeltOperation(operation)) {
+      if (isSettlementEligibleMeltOperation(operation)) {
         await this.registerOperationInterest(operation);
       }
     });
@@ -255,7 +261,7 @@ export class MeltSettlementProcessor {
         if (!this.running) {
           return;
         }
-        if (isPendingMeltOperation(operation)) {
+        if (isSettlementEligibleMeltOperation(operation)) {
           await this.registerOperationInterest(operation);
         }
       }
@@ -264,7 +270,9 @@ export class MeltSettlementProcessor {
     }
   }
 
-  private async registerOperationInterest(operation: PendingMeltOperation): Promise<void> {
+  private async registerOperationInterest(
+    operation: PendingMeltOperation | ExecutingMeltOperation,
+  ): Promise<void> {
     if (!this.running) {
       return;
     }
