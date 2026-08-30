@@ -17,6 +17,7 @@ import type { MintInfo } from '../types';
 import type { MintRequestProvider } from './MintRequestProvider.ts';
 import type { KeysetKeypairs } from '../models/Keyset.ts';
 import type { MintMethod } from '../operations/mint/MintMethodHandler.ts';
+import type { MeltMethod, MeltMethodQuoteSnapshot } from '../operations/melt/MeltMethodHandler.ts';
 
 type NormalizedMintQuoteSnapshot<M extends MintMethod> = M extends 'bolt11'
   ? MintQuoteBolt11Response
@@ -109,6 +110,19 @@ export class MintAdapter {
   async checkMeltQuote(mintUrl: string, quoteId: string): Promise<MeltQuoteBolt11Response> {
     const cashuMint = this.getCashuMint(mintUrl);
     return await cashuMint.checkMeltQuoteBolt11(quoteId);
+  }
+
+  /**
+   * Check the current state of a melt quote for any payment method, including
+   * custom methods registered via declaration merging.
+   */
+  async checkMeltQuoteFor<M extends MeltMethod>(
+    mintUrl: string,
+    method: M,
+    quoteId: string,
+  ): Promise<MeltMethodQuoteSnapshot<M>> {
+    const cashuMint = this.getCashuMint(mintUrl);
+    return cashuMint.checkMeltQuote<MeltMethodQuoteSnapshot<M>>(method, quoteId);
   }
 
   // Check current state of a bolt12 melt quote (returns full response including change)
