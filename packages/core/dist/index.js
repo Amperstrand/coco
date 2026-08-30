@@ -8122,6 +8122,17 @@ var BaseQuoteMeltHandler = class {
 		return OutputData.sumOutputAmounts(deserializeOutputData(operation.swapOutputData).send);
 	}
 	/**
+	* Whether the selected proofs warrant a pre-melt swap to exact amounts.
+	* Default: swap when the selection reaches 110% of the required amount.
+	* Methods whose melt responses carry one-time change signatures that a lost
+	* response can strand (no re-fetch on state checks) may swap on ANY
+	* overshoot instead — an exact-amount melt returns no change, and a swap's
+	* outputs are recoverable from the mint via restore.
+	*/
+	needsSwapFor(selectedAmount, totalAmount) {
+		return selectedAmount.greaterThanOrEqual(totalAmount.scaledBy(SWAP_THRESHOLD_NUMERATOR, SWAP_THRESHOLD_DENOMINATOR));
+	}
+	/**
 	* Prepare a bolt-backed melt operation.
 	*
 	* This method:
@@ -8163,12 +8174,11 @@ var BaseQuoteMeltHandler = class {
 		}, true);
 		const selectedAmount = sumProofs(selectedProofs);
 		if (selectedAmount.lessThan(totalAmount)) throw new ProofValidationError("Melt amount is not sufficient after fees");
-		const swapThreshold = totalAmount.scaledBy(SWAP_THRESHOLD_NUMERATOR, SWAP_THRESHOLD_DENOMINATOR);
-		const needsSwap = selectedAmount.greaterThanOrEqual(swapThreshold);
+		const needsSwap = this.needsSwapFor(selectedAmount, totalAmount);
 		ctx.logger?.debug("Proofs selected for melt", {
 			operationId,
 			selectedAmount,
-			swapThreshold,
+			totalAmount,
 			proofCount: selectedProofs.length,
 			needsSwap
 		});
