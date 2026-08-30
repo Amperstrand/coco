@@ -1175,7 +1175,26 @@ export class QuoteLifecycle {
         : mintQuoteObservationFromBolt12Response(mintUrl, bolt12Quote);
     }
 
-    throw new Error(`Unsupported mint quote import method ${String(method)}`);
+    const statefulSnapshot = quote as MintMethodQuoteSnapshot<'bolt11'> & {
+      amount?: unknown;
+    };
+    const rawAmount = statefulSnapshot.amount;
+    if (rawAmount === undefined || rawAmount === null) {
+      throw new MintQuoteValidationError(
+        'Mint quote ' + String(statefulSnapshot.quote) + ' has invalid amount',
+      );
+    }
+    const customAmount = Amount.from(rawAmount as AmountLike);
+    if (customAmount.isZero()) {
+      throw new MintQuoteValidationError(
+        'Mint quote ' + String(statefulSnapshot.quote) + ' has invalid amount',
+      );
+    }
+    const customResponse = { ...statefulSnapshot, amount: customAmount };
+    const imported = validateAccounting
+      ? mintQuoteFromBolt11Response(mintUrl, customResponse)
+      : mintQuoteObservationFromBolt11Response(mintUrl, customResponse);
+    return { ...imported, method } as MintQuote;
   }
 
   private async resolveAndPersistMintQuoteObservation(
