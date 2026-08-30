@@ -28,7 +28,7 @@ export type MeltOperationState =
   | 'rolling_back'
   | 'rolled_back';
 
-import type { Amount } from '@cashu/cashu-ts';
+import type { Amount, SerializedBlindedSignature } from '@cashu/cashu-ts';
 import { getSecretsFromSerializedOutputData, type SerializedOutputData } from '../../utils';
 import type { MeltMethod, MeltMethodData, MeltMethodMeta } from './MeltMethodHandler';
 import { DEFAULT_UNIT, normalizeUnit } from '../../amounts.ts';
@@ -149,6 +149,16 @@ export interface ExecutingMeltOperation extends MeltOperationBase, PreparedData 
  */
 export interface PendingMeltOperation extends MeltOperationBase, PreparedData {
   state: 'pending';
+
+  /**
+   * Change signatures returned by the mint while the melt was still awaiting
+   * settlement (PENDING response). The mint burns the full input amount at
+   * melt time and returns the overpay as change immediately, but quote state
+   * checks can never re-fetch these signatures — they are one-time knowledge.
+   * Persisted on the operation row so `finalize` can still claim the change
+   * when the quote later settles (PAID), even across restarts or reloads.
+   */
+  pendingChange?: SerializedBlindedSignature[];
 }
 
 /**

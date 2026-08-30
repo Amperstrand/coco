@@ -1,4 +1,4 @@
-import type { Amount } from '@cashu/cashu-ts';
+import type { Amount, SerializedBlindedSignature } from '@cashu/cashu-ts';
 import type {
   ExecutingMeltOperation,
   FinalizeResult,
@@ -78,13 +78,24 @@ export function buildPaidResult<M extends MeltMethod>(
 /**
  * Build a PENDING execution result.
  * Used when the melt is in-flight and awaiting confirmation.
+ *
+ * The mint burns the full input amount at melt time and returns the overpay
+ * as change signatures immediately — even while the melt itself is PENDING.
+ * Quote state checks can never re-fetch them, so they ride the pending
+ * operation row (`pendingChange`) for `finalize` to claim at settlement.
  */
 export function buildPendingResult<M extends MeltMethod>(
   operation: ExecutingMeltOperation & MeltMethodMeta<M>,
+  change?: SerializedBlindedSignature[],
 ): ExecutionResult<M> {
   return {
     status: 'PENDING',
-    pending: { ...operation, state: 'pending', updatedAt: Date.now() },
+    pending: {
+      ...operation,
+      state: 'pending',
+      updatedAt: Date.now(),
+      ...(change && change.length > 0 ? { pendingChange: change } : {}),
+    },
   };
 }
 

@@ -500,8 +500,10 @@ export abstract class BaseQuoteMeltHandler<M extends MeltMethod> implements Melt
       }
 
       case 'PENDING':
-        // Proofs stay inflight, finalize will be called later via checkPending -> finalize
-        return buildPendingResult(ctx.operation);
+        // Proofs stay inflight, finalize will be called later via checkPending -> finalize.
+        // The mint may already have burned the inputs and returned the overpay
+        // as change — persist it on the operation, it cannot be re-fetched.
+        return buildPendingResult(ctx.operation, change);
 
       case 'UNPAID':
         // Melt failed so we release proofs
@@ -610,16 +612,25 @@ export abstract class BaseQuoteMeltHandler<M extends MeltMethod> implements Melt
       throw new Error(`Cannot finalize: melt quote ${quoteId} is ${res.state}, expected PAID`);
     }
 
+    // Settlement sources (persisted quote or a live state check) cannot
+    // re-fetch change signatures; fall back to those persisted on the
+    // operation when the melt returned PENDING with change.
+    const change =
+      res.change ??
+      (ctx.operation.pendingChange && ctx.operation.pendingChange.length > 0
+        ? ctx.operation.pendingChange
+        : undefined);
+
     const meltInputAmount = this.getMeltInputAmount(ctx.operation);
 
     // Calculate actual settlement amounts from the mint response
     const { changeAmount, effectiveFee } = this.calculateSettlementAmounts(
       meltInputAmount,
       meltAmount,
-      res.change,
+      change,
     );
 
-    await this.finalizeOperation(ctx, res.change);
+    await this.finalizeOperation(ctx, change);
 
     ctx.logger?.info('Pending melt operation finalized with settlement amounts', {
       operationId,
