@@ -8033,14 +8033,20 @@ function buildPaidResult(operation, finalizeResult) {
 /**
 * Build a PENDING execution result.
 * Used when the melt is in-flight and awaiting confirmation.
+*
+* The mint burns the full input amount at melt time and returns the overpay
+* as change signatures immediately — even while the melt itself is PENDING.
+* Quote state checks can never re-fetch them, so they ride the pending
+* operation row (`pendingChange`) for `finalize` to claim at settlement.
 */
-function buildPendingResult(operation) {
+function buildPendingResult(operation, change) {
 	return {
 		status: "PENDING",
 		pending: {
 			...operation,
 			state: "pending",
-			updatedAt: Date.now()
+			updatedAt: Date.now(),
+			...change && change.length > 0 ? { pendingChange: change } : {}
 		}
 	};
 }
@@ -8339,7 +8345,7 @@ var BaseQuoteMeltHandler = class {
 					finalizedData: this.buildFinalizedData(response)
 				});
 			}
-			case "PENDING": return buildPendingResult(ctx.operation);
+			case "PENDING": return buildPendingResult(ctx.operation, change);
 			case "UNPAID":
 				await ctx.proofService.restoreProofsToReady(mintUrl, proofsToMelt.map((p) => p.secret));
 				return buildFailedResult(ctx.operation);
@@ -8413,9 +8419,10 @@ var BaseQuoteMeltHandler = class {
 		if (ctx.canonicalQuote && ctx.canonicalQuote.state !== "PAID") throw new Error(`Cannot finalize: melt quote ${quoteId} is ${ctx.canonicalQuote.state}, expected PAID`);
 		const res = persistedSettlement ?? await this.checkMeltQuote(ctx);
 		if (res.state !== "PAID") throw new Error(`Cannot finalize: melt quote ${quoteId} is ${res.state}, expected PAID`);
+		const change = res.change ?? (ctx.operation.pendingChange && ctx.operation.pendingChange.length > 0 ? ctx.operation.pendingChange : void 0);
 		const meltInputAmount = this.getMeltInputAmount(ctx.operation);
-		const { changeAmount, effectiveFee } = this.calculateSettlementAmounts(meltInputAmount, meltAmount, res.change);
-		await this.finalizeOperation(ctx, res.change);
+		const { changeAmount, effectiveFee } = this.calculateSettlementAmounts(meltInputAmount, meltAmount, change);
+		await this.finalizeOperation(ctx, change);
 		ctx.logger?.info("Pending melt operation finalized with settlement amounts", {
 			operationId,
 			quoteId,
