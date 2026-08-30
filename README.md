@@ -85,3 +85,30 @@ See `packages/core/README.md` for API details and package-level usage.
 
 Please see `CONTRIBUTING.md` for contributor workflow, testing commands, changesets,
 and scoped conventional commit message guidance.
+
+---
+
+# Amperstrand fork notes
+
+We maintain this fork to run [pecan](https://github.com/Amperstrand/pecan) —
+the giftcard.nok NOK Cashu mint — on coco with custom NUT-04/05 payment
+methods that upstream coco cannot express without core changes.
+
+## Branch structure
+
+| Branch | Purpose | Upstream action |
+|---|---|---|
+| `main` | **Our deployment** — all changes merged, versions bumped, `dist/` committed for tarball consumption. Protected (PR required). | Track for our production state |
+| `fix/indexeddb-method-preservation` | IndexedDB hardcoded `method: 'bolt11'` for stateful mint quote rows | Cherry-pick as a bug fix |
+| `fix/snapshot-import-export` | `mintQuoteFromSnapshot` threw for custom methods; `mintQuoteToMethodSnapshot` relabeled everything `bolt12` | Cherry-pick as a bug fix |
+| `fix/quotedata-roundtrip` | IndexedDB round-tripped only `quoteData.amount`, dropping `request`/`expected_sat` | Cherry-pick as a bug fix |
+| `fix/methoddata-reconstruction` | `methodDataFromMeltQuote` returned `undefined` for custom methods | Cherry-pick as a bug fix |
+| `fix/settlement-resume` | MeltSettlementProcessor boot filter dropped `executing` ops → reload mid-melt never resumed | Cherry-pick as a bug fix |
+| `feat/type-opening` | Opened `MintQuote`/`MeltQuote` conditional types for custom methods | Review as an API proposal |
+| `feat/check-melt-quote-for` | `MintAdapter.checkMeltQuoteFor` — generic melt quote state checks | Review as an API proposal |
+
+Each `fix/*` and `feat/*` branch is a **single commit** — no merge commits,
+no version bumps, no `dist/` changes. Upstream can cherry-pick, use as
+context, or ignore entirely.
+
+Full details: [issue #9](https://github.com/Amperstrand/coco/issues/9)
