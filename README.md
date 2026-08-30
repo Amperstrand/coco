@@ -91,8 +91,8 @@ and scoped conventional commit message guidance.
 # Amperstrand fork notes
 
 We maintain this fork to run [pecan](https://github.com/Amperstrand/pecan) —
-the giftcard.nok NOK Cashu mint — on coco with custom NUT-04/05 payment
-methods that upstream coco cannot express without core changes.
+the giftcard.cashu.exchange EUR Cashu mint — on coco with custom NUT-04/05
+payment methods that upstream coco cannot express without core changes.
 
 ## Branch structure
 
@@ -104,11 +104,27 @@ methods that upstream coco cannot express without core changes.
 | `fix/quotedata-roundtrip` | IndexedDB round-tripped only `quoteData.amount`, dropping `request`/`expected_sat` | Cherry-pick as a bug fix |
 | `fix/methoddata-reconstruction` | `methodDataFromMeltQuote` returned `undefined` for custom methods | Cherry-pick as a bug fix |
 | `fix/settlement-resume` | MeltSettlementProcessor boot filter dropped `executing` ops → reload mid-melt never resumed | Cherry-pick as a bug fix |
+| `fix/pending-melt-change-preservation` | PENDING melt responses dropped the mint's change signatures; change now rides the pending operation row and finalize claims it. Also exposes the pre-melt swap decision (`needsSwapFor`) so methods can swap to exact amounts | Cherry-pick the change fix; review the swap hook as an API proposal |
 | `feat/type-opening` | Opened `MintQuote`/`MeltQuote` conditional types for custom methods | Review as an API proposal |
 | `feat/check-melt-quote-for` | `MintAdapter.checkMeltQuoteFor` — generic melt quote state checks | Review as an API proposal |
 
 Each `fix/*` and `feat/*` branch is a **single commit** — no merge commits,
 no version bumps, no `dist/` changes. Upstream can cherry-pick, use as
-context, or ignore entirely.
+context, or ignore entirely. (`fix/pending-melt-change-preservation` still
+carries the version bump + `dist/` for our own deployment; squash before
+opening the upstream PR.)
 
 Full details: [issue #9](https://github.com/Amperstrand/coco/issues/9)
+
+## Known upstream gaps encountered in production
+
+- **Change signatures are one-time knowledge.** A NUT-05 melt response
+  carries the overpay as blinded change signatures; quote state checks
+  cannot re-fetch them. If the response is lost (page reload during the
+  melt), the overpay is gone. cdk *stores* the signatures
+  (`blind_signature` rows keyed by quote) and master's `check_melt_quote`
+  re-serves them, but cdk-mintd `0.18.0-rc.0`'s custom-method state check
+  omits `change`. Our mitigation is exact-amount melts (see
+  `needsSwapFor`); the general fix belongs upstream (cdk serving change on
+  state checks, and coco consuming it — `MeltBranchHandler.checkMeltQuote`
+  already passes it through when present).
