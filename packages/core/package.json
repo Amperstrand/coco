@@ -1,6 +1,6 @@
 {
   "name": "@cashu/coco-core",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "repository": {
@@ -69,7 +69,7 @@
   "type": "module",
   "types": "dist/index.d.ts",
   "dependencies": {
-    "@cashu/cashu-ts": "5.0.0-rc.4",
+    "@cashu/cashu-ts": "5.0.0-rc.9",
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
     "@scure/bip32": "^2.0.1"
