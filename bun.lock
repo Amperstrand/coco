@@ -50,7 +50,7 @@
     },
     "packages/core": {
       "name": "@cashu/coco-core",
-      "version": "1.0.0",
+      "version": "1.0.10",
       "dependencies": {
         "@cashu/cashu-ts": "5.0.0-rc.4",
         "@noble/curves": "^2.0.1",
@@ -88,7 +88,7 @@
     },
     "packages/indexeddb": {
       "name": "@cashu/coco-indexeddb",
-      "version": "1.0.0",
+      "version": "1.0.10",
       "dependencies": {
         "dexie": "^4.0.8",
       },
@@ -2308,6 +2308,10 @@
 
     "@babel/traverse--for-generate-function-map/@babel/types": ["@babel/types@7.28.6", "", { "dependencies": { "@babel/helper-string-parser": "^7.27.1", "@babel/helper-validator-identifier": "^7.28.5" } }, "sha512-0ZrskXVEHSWIqZM/sQZ4EV3jZJXRkio/WCxaqKZP1g//CEWEPSfeZFcms4XeKBCHU0ZKnIkdJeU/kF+eRp5lBg=="],
 
+    "@cashu/coco-adapter-tests/@cashu/coco-core": ["@cashu/coco-core@1.0.0", "", { "dependencies": { "@cashu/cashu-ts": "^3.5.0", "@noble/curves": "^2.0.1", "@noble/hashes": "^2.0.1", "@scure/bip32": "^2.0.1" }, "peerDependencies": { "typescript": "^5" } }, "sha512-FBBwJUAubyKdo15vVjkdVQVXy8Sg6y0hBGW7JD4PuhEuzJDMD3RMoCScZlki5bUJmT89yKuaGJBvzOAZuB/4+A=="],
+
+    "@cashu/coco-react/@cashu/coco-core": ["@cashu/coco-core@1.0.0", "", { "dependencies": { "@cashu/cashu-ts": "^3.5.0", "@noble/curves": "^2.0.1", "@noble/hashes": "^2.0.1", "@scure/bip32": "^2.0.1" }, "peerDependencies": { "typescript": "^5" } }, "sha512-FBBwJUAubyKdo15vVjkdVQVXy8Sg6y0hBGW7JD4PuhEuzJDMD3RMoCScZlki5bUJmT89yKuaGJBvzOAZuB/4+A=="],
+
     "@cashu/coco-sqlite/vitest": ["vitest@2.1.9", "", { "dependencies": { "@vitest/expect": "2.1.9", "@vitest/mocker": "2.1.9", "@vitest/pretty-format": "^2.1.9", "@vitest/runner": "2.1.9", "@vitest/snapshot": "2.1.9", "@vitest/spy": "2.1.9", "@vitest/utils": "2.1.9", "chai": "^5.1.2", "debug": "^4.3.7", "expect-type": "^1.1.0", "magic-string": "^0.30.12", "pathe": "^1.1.2", "std-env": "^3.8.0", "tinybench": "^2.9.0", "tinyexec": "^0.3.1", "tinypool": "^1.0.1", "tinyrainbow": "^1.2.0", "vite": "^5.0.0", "vite-node": "2.1.9", "why-is-node-running": "^2.3.0" }, "peerDependencies": { "@edge-runtime/vm": "*", "@types/node": "^18.0.0 || >=20.0.0", "@vitest/browser": "2.1.9", "@vitest/ui": "2.1.9", "happy-dom": "*", "jsdom": "*" }, "optionalPeers": ["@edge-runtime/vm", "@types/node", "@vitest/browser", "@vitest/ui", "happy-dom", "jsdom"], "bin": { "vitest": "vitest.mjs" } }, "sha512-MSmPM9REYqDGBI8439mA4mWhV5sKmDlBKWIYbA3lRb2PTHACE0mgKwA8yQ2xq9vxDTuk4iPrECBAEW2aoFXY0Q=="],
 
     "@eslint-community/eslint-utils/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
@@ -2653,6 +2657,10 @@
     "@babel/traverse/@babel/types/@babel/helper-string-parser": ["@babel/helper-string-parser@7.27.1", "", {}, "sha512-qMlSxKbpRlAridDExk92nSobyDdpPijUq2DW6oDnUqd0iOGxmQjyqhMIihI9+zv4LPyZdRje2cavWPbCbWm3eA=="],
 
     "@babel/traverse/@babel/types/@babel/helper-validator-identifier": ["@babel/helper-validator-identifier@7.28.5", "", {}, "sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q=="],
+
+    "@cashu/coco-adapter-tests/@cashu/coco-core/@cashu/cashu-ts": ["@cashu/cashu-ts@3.7.1", "", { "dependencies": { "@noble/curves": "^2.2.0", "@noble/hashes": "^2.2.0", "@scure/base": "^2.2.0", "@scure/bip32": "^2.2.0" } }, "sha512-EdUdjR6D0eY1YT6irNh/d5SBRc/ug4WNpnlLBXbRI9iOb8UNnQeGfk9CJQWL9ElQMjQ/4g582SehKXzEAZ2vnw=="],
+
+    "@cashu/coco-react/@cashu/coco-core/@cashu/cashu-ts": ["@cashu/cashu-ts@3.7.1", "", { "dependencies": { "@noble/curves": "^2.2.0", "@noble/hashes": "^2.2.0", "@scure/base": "^2.2.0", "@scure/bip32": "^2.2.0" } }, "sha512-EdUdjR6D0eY1YT6irNh/d5SBRc/ug4WNpnlLBXbRI9iOb8UNnQeGfk9CJQWL9ElQMjQ/4g582SehKXzEAZ2vnw=="],
 
     "@cashu/coco-sqlite/vitest/@vitest/expect": ["@vitest/expect@2.1.9", "", { "dependencies": { "@vitest/spy": "2.1.9", "@vitest/utils": "2.1.9", "chai": "^5.1.2", "tinyrainbow": "^1.2.0" } }, "sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw=="],
 

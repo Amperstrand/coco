@@ -2888,8 +2888,19 @@ var ProofService = class {
 		keysets.forEach((ks) => {
 			keysetMap[ks.id] = ks;
 		});
-		const proofs = outputData.slice(0, changeSignatures.length).flatMap((output, i) => {
-			const sig = changeSignatures[i];
+		const isPositiveAmount = (a) => {
+			if (a == null) return false;
+			if (typeof a === "object" && typeof a.isZero === "function") return !a.isZero();
+			return Number(a) > 0;
+		};
+		const valuableSignatures = changeSignatures.filter((sig) => isPositiveAmount(sig.amount));
+		const droppedZeroValue = changeSignatures.length - valuableSignatures.length;
+		if (droppedZeroValue > 0) this.logger?.warn("Dropped zero-value change signatures (NUT-08)", {
+			dropped: droppedZeroValue,
+			total: changeSignatures.length
+		});
+		const proofs = outputData.slice(0, valuableSignatures.length).flatMap((output, i) => {
+			const sig = valuableSignatures[i];
 			const keyset = keysetMap[output.blindedMessage.id];
 			if (!sig || !keyset) {
 				const reason = !sig ? "missing signature" : "missing keyset";

@@ -1526,6 +1526,95 @@ describe('ProofService', () => {
       expect(recovered[0]?.C).not.toBe(blindedC_);
     });
 
+    it('drops zero-value change signatures instead of crashing (cashu-ts #1079)', async () => {
+      // NUT-08: mints SHOULD omit zero-value change signatures but MAY include
+      // them. A zero-amount signature has no keypair (keys['0'] is undefined)
+      // and used to crash toProof inside unblindAndSaveChangeProofs — after the
+      // input proofs were already marked spent.
+      const serialized: SerializedOutputData = {
+        keep: [
+          {
+            blindedMessage: { amount: '0', id: keysetId, B_: 'B_blank_0' },
+            blindingFactor: 'aa',
+            secret: Buffer.from('change-secret-0').toString('hex'),
+          },
+          {
+            blindedMessage: { amount: '0', id: keysetId, B_: 'B_blank_1' },
+            blindingFactor: 'bb',
+            secret: Buffer.from('change-secret-1').toString('hex'),
+          },
+        ],
+        send: [],
+      };
+
+      const changeSigs = [
+        { amount: Amount.from(0), C_: 'ZERO_C_', id: keysetId },
+        { amount: Amount.from(7), C_: 'SEVEN_C_', id: keysetId },
+      ];
+
+      const toProofCalls: Array<{ amount: unknown }> = [];
+      (OutputData.prototype as any).toProof = mock(function (this: any, sig: any) {
+        toProofCalls.push({ amount: sig.amount });
+        if (String(sig.amount) === '0') {
+          throw new Error('Expected hex string, got undefined');
+        }
+        return {
+          id: keysetId,
+          amount: sig.amount,
+          secret: 'unblinded-secret',
+          C: 'UNBLINDED_' + String(sig.amount),
+        };
+      });
+
+      const localMintService = {
+        async getAllTrustedMints() {
+          return [{ mintUrl }];
+        },
+        async ensureUpdatedMint(_url: string) {
+          return {
+            mint: {},
+            keysets: [{ id: keysetId, unit: 'sat', active: true, keypairs: { '7': 'pubkey-7' } }],
+          };
+        },
+      };
+      const localWalletService = {
+        async getWalletWithActiveKeysetId() {
+          return { wallet: {} };
+        },
+        async getWallet() {
+          return { selectProofsToSend: (p: any[]) => ({ send: p }) };
+        },
+      };
+
+      const service = new ProofService(
+        counterService,
+        proofRepo,
+        localWalletService as any,
+        localMintService as any,
+        keyRingService as any,
+        seedService,
+        undefined,
+        bus,
+      );
+
+      const result = await service.unblindAndSaveChangeProofs(
+        mintUrl,
+        serialized.keep.map((k) => ({
+          blindedMessage: k.blindedMessage,
+          blindingFactor: k.blindingFactor,
+          secret: k.secret,
+          toProof: (OutputData.prototype as any).toProof,
+        })) as any,
+        changeSigs as any,
+        { unit: 'sat', persistRecoveredProofs: false },
+      );
+
+      // the zero-value sig was dropped, the nonzero one survived
+      expect(result).toHaveLength(1);
+      expect(result[0]?.amount.toString()).toBe('7');
+      expect(toProofCalls).toEqual([{ amount: changeSigs[1].amount }]);
+    });
+
     it('rejects restored signatures from a different-unit keyset', async () => {
       const B_ = 'mock_blinded_point_B_';
       const serializedOutputData: SerializedOutputData = {

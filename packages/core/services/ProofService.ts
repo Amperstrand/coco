@@ -960,12 +960,33 @@ export class ProofService {
       keysetMap[ks.id] = ks;
     });
 
+    // NUT-08: mints SHOULD omit zero-value change signatures but MAY include
+    // them (cashu-ts #1079). A zero-amount signature has no keypair
+    // (keys['0'] is undefined) and toProof would throw — after the input
+    // proofs are already marked spent. Drop zero-value signatures and pair
+    // the remainder positionally; the imprinted amounts travel on the sigs.
+    const isPositiveAmount = (a: unknown): boolean => {
+      if (a == null) return false;
+      if (typeof a === 'object' && typeof (a as { isZero?: unknown }).isZero === 'function') {
+        return !(a as { isZero: () => boolean }).isZero();
+      }
+      return Number(a) > 0;
+    };
+    const valuableSignatures = changeSignatures.filter((sig) => isPositiveAmount(sig.amount));
+    const droppedZeroValue = changeSignatures.length - valuableSignatures.length;
+    if (droppedZeroValue > 0) {
+      this.logger?.warn('Dropped zero-value change signatures (NUT-08)', {
+        dropped: droppedZeroValue,
+        total: changeSignatures.length,
+      });
+    }
+
     // Slice output data to match signature count
-    const matchedOutputs = outputData.slice(0, changeSignatures.length);
+    const matchedOutputs = outputData.slice(0, valuableSignatures.length);
 
     // Unblind each signature to create proofs
     const proofs: Proof[] = matchedOutputs.flatMap((output, i) => {
-      const sig = changeSignatures[i];
+      const sig = valuableSignatures[i];
       const keyset = keysetMap[output.blindedMessage.id];
       if (!sig || !keyset) {
         const reason = !sig ? 'missing signature' : 'missing keyset';
