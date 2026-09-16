@@ -624,6 +624,17 @@ export class Manager {
     return this.proofService.swapFutureUnits(mintUrl, unit, tags, split);
   }
 
+  /** Receive future-unit proofs from a bearer token via a fresh tagged
+   * swap (inputs are the token's proofs — nothing to trust but the mint). */
+  async receiveFutureUnits(
+    mintUrl: string,
+    unit: string,
+    tags: string[][],
+    inputProofs: Proof[],
+  ): Promise<Proof[]> {
+    return this.proofService.receiveFutureUnits(mintUrl, unit, tags, inputProofs);
+  }
+
   async enableMeltSettlementProcessor(options?: {
     initializeExistingPendingOperationsOnStart?: boolean;
   }): Promise<boolean> {

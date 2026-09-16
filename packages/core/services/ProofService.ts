@@ -1117,12 +1117,30 @@ export class ProofService {
   }
 
   /**
+   * Take ownership of future-unit proofs handed over out-of-band (a
+   * bearer token): swap them into fresh tagged proofs bound to THIS
+   * wallet. Avoids the generic receive pipeline — its multi-mint
+   * bootstrapping crashes fresh contexts on this stack.
+   */
+  async receiveFutureUnits(
+    mintUrl: string,
+    unit: string,
+    tags: string[][],
+    inputProofs: Proof[],
+  ): Promise<Proof[]> {
+    const total = sumProofs(inputProofs).toBigInt();
+    const { keep } = await this.swapTaggedInputs(mintUrl, unit, tags, inputProofs, {
+      keep: total,
+      send: 0n,
+    });
+    return keep;
+  }
+
+  /**
    * Swap future-unit proofs into a keep/send split where EVERY replacement
    * proof's secret carries the NUT-10 `tags` (the NUT-32 future tag with
    * the terms URI). The mint enforces unit preservation; the tags preserve
-   * the terms commitment through the split. Inputs are marked spent, the
-   * new proofs saved, exactly like the pre-melt swap in
-   * BaseQuoteMeltHandler.
+   * the terms commitment through the split.
    */
   async swapFutureUnits(
     mintUrl: string,
@@ -1134,10 +1152,6 @@ export class ProofService {
     if (split.keep < 0n || split.send < 0n || total <= 0n) {
       throw new ProofValidationError('future swap needs non-negative amounts and a positive total');
     }
-    const { wallet, keys, keysetId } = await this.walletService.getWalletWithActiveKeysetId(
-      mintUrl,
-      unit,
-    );
     const readyProofs = await this.getReadyProofs(mintUrl, { units: [unit] });
     const have = sumProofs(readyProofs).toBigInt();
     if (have < total) {
@@ -1152,12 +1166,27 @@ export class ProofService {
       selectedSum += proof.amount.toBigInt();
       if (selectedSum >= total) break;
     }
+    return this.swapTaggedInputs(mintUrl, unit, tags, selected, split);
+  }
 
-    // One custom output group covering the FULL input total — cashu-ts's
-    // wallet.send re-selects a minimal input subset internally, which
-    // desynchronizes any pre-planned keep/send split; wallet.receive
-    // consumes exactly the proofs handed to it. The send subset is
-    // carved out of the fresh proofs afterwards, by denomination.
+  /**
+   * Swap core: consume EXACTLY the given inputs into fresh tagged outputs
+   * (keep/send split) via wallet.receive — cashu-ts's wallet.send
+   * re-selects a minimal input subset internally, which desynchronizes a
+   * pre-planned split. Inputs are marked spent; only the keep side is
+   * persisted (the send side exists solely in the exported token).
+   */
+  private async swapTaggedInputs(
+    mintUrl: string,
+    unit: string,
+    tags: string[][],
+    selected: Proof[],
+    split: { keep: bigint; send: bigint },
+  ): Promise<{ keep: Proof[]; send: Proof[] }> {
+    const { wallet, keys, keysetId } = await this.walletService.getWalletWithActiveKeysetId(
+      mintUrl,
+      unit,
+    );
     const sendDenoms = splitAmount(Amount.from(split.send), keys.keys).map((a) => a.toBigInt());
     const keepDenoms = splitAmount(Amount.from(split.keep), keys.keys).map((a) => a.toBigInt());
     const mkTagged = (amount: Amount): OutputData => {
@@ -1208,9 +1237,6 @@ export class ProofService {
         `future swap denominations did not resolve: missing ${wanted.join(', ')}`,
       );
     }
-    // Bearer-transfer semantics: the send subset is NOT persisted — it
-    // exists only in the exported token. Persisting it would leave the
-    // sender a spendable copy of what was handed over.
     await this.saveProofs(
       mintUrl,
       mapProofToCoreProof(mintUrl, 'ready', keep, { unit }),

@@ -3053,7 +3053,6 @@ var ProofService = class {
 			data: outputs
 		});
 		await this.setProofState(mintUrl, selected.map((p) => p.secret), "spent");
-		await this.saveProofs(mintUrl, mapProofToCoreProof(mintUrl, "ready", fresh, { unit }));
 		const wanted = [...sendDenoms];
 		const send = [];
 		const keep = [];
@@ -3066,6 +3065,7 @@ var ProofService = class {
 			} else keep.push(proof);
 		}
 		if (wanted.length > 0) throw new ProofValidationError(`future swap denominations did not resolve: missing ${wanted.join(", ")}`);
+		await this.saveProofs(mintUrl, mapProofToCoreProof(mintUrl, "ready", keep, { unit }));
 		return {
 			keep,
 			send
