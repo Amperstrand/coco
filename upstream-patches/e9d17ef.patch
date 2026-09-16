@@ -1,0 +1,119 @@
+From e9d17ef811e6d5bae6c59e0c69b66c238bfaf597 Mon Sep 17 00:00:00 2001
+From: amperstand <atlas@oh-my-opencode.com>
+Date: Sat, 29 Aug 2026 21:00:06 +0200
+Subject: [PATCH] fix(indexeddb): round-trip custom quoteData fields
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+rowToMintQuote/serializeQuoteData kept only quoteData.amount for stateful
+quotes, dropping custom-method extras (request, expected_sat) across the
+persistence round-trip — quotes.mint.create returns the re-read row, so
+wallets lost everything but the amount. Serialize the whole quoteData
+object (amount explicitly over the spread) and hydrate extras back.
+---
+ packages/core/package.json                         |  2 +-
+ packages/indexeddb/dist/index.js                   | 14 ++++++++++++--
+ packages/indexeddb/package.json                    |  2 +-
+ .../src/repositories/MintQuoteRepository.ts        | 10 ++++++++--
+ 4 files changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/packages/core/package.json b/packages/core/package.json
+index 7f2a46bc..dea32278 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@cashu/coco-core",
+-  "version": "1.0.7",
++  "version": "1.0.8",
+   "main": "dist/index.js",
+   "module": "dist/index.js",
+   "repository": {
+diff --git a/packages/indexeddb/dist/index.js b/packages/indexeddb/dist/index.js
+index 67835a6d..b67b1d02 100644
+--- a/packages/indexeddb/dist/index.js
++++ b/packages/indexeddb/dist/index.js
+@@ -1470,6 +1470,7 @@ function rowToMintQuote(row) {
+ 	const amountPaid = deserializeAmount(row.amountPaid);
+ 	const amountIssued = deserializeAmount(row.amountIssued);
+ 	const state = deriveBolt11MintQuoteState(amountPaid, amountIssued);
++	const extraQuoteData = quoteData;
+ 	return {
+ 		mintUrl: row.mintUrl,
+ 		method: row.method,
+@@ -1485,13 +1486,22 @@ function rowToMintQuote(row) {
+ 		amountPaid,
+ 		amountIssued,
+ 		remoteUpdatedAt: row.remoteUpdatedAt ?? null,
+-		quoteData: { amount },
++		quoteData: {
++			...extraQuoteData,
++			amount
++		},
+ 		createdAt: row.createdAt,
+ 		updatedAt: row.updatedAt
+ 	};
+ }
+ function serializeQuoteData(quote) {
+-	if (isStatefulMintQuote(quote)) return stringifyJson({ amount: serializeAmount(quote.quoteData.amount) });
++	if (isStatefulMintQuote(quote)) {
++		const data = quote.quoteData;
++		return stringifyJson({
++			...data,
++			amount: serializeAmount(quote.quoteData.amount)
++		});
++	}
+ 	if (quote.method === "bolt12") {
+ 		const amount = quote.quoteData.amount ?? quote.amount;
+ 		return stringifyJson({
+diff --git a/packages/indexeddb/package.json b/packages/indexeddb/package.json
+index e02a166d..0afebaa2 100644
+--- a/packages/indexeddb/package.json
++++ b/packages/indexeddb/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@cashu/coco-indexeddb",
+-  "version": "1.0.7",
++  "version": "1.0.8",
+   "main": "dist/index.js",
+   "module": "dist/index.js",
+   "types": "dist/index.d.ts",
+diff --git a/packages/indexeddb/src/repositories/MintQuoteRepository.ts b/packages/indexeddb/src/repositories/MintQuoteRepository.ts
+index 5602b192..6d2c9de0 100644
+--- a/packages/indexeddb/src/repositories/MintQuoteRepository.ts
++++ b/packages/indexeddb/src/repositories/MintQuoteRepository.ts
+@@ -64,6 +64,9 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
+   const amountPaid = deserializeAmount(row.amountPaid);
+   const amountIssued = deserializeAmount(row.amountIssued);
+   const state = deriveBolt11MintQuoteState(amountPaid, amountIssued);
++  // Custom methods keep extra quoteData fields (e.g. `request`, `expected_sat`)
++  // beyond `amount`; hydrate must round-trip them, not rebuild a bare amount.
++  const extraQuoteData = quoteData as Record<string, unknown>;
+   return {
+     mintUrl: row.mintUrl,
+     method: row.method,
+@@ -79,7 +82,7 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
+     amountPaid,
+     amountIssued,
+     remoteUpdatedAt: row.remoteUpdatedAt ?? null,
+-    quoteData: { amount },
++    quoteData: { ...extraQuoteData, amount },
+     createdAt: row.createdAt,
+     updatedAt: row.updatedAt,
+   } as MintQuote;
+@@ -87,7 +90,10 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
+ 
+ function serializeQuoteData(quote: MintQuote): string {
+   if (isStatefulMintQuote(quote)) {
+-    return stringifyJson({ amount: serializeAmount(quote.quoteData.amount) });
++    // Preserve any extra quoteData fields custom methods carry; `amount`
++    // serializes explicitly over the spread.
++    const data = quote.quoteData as unknown as Record<string, unknown>;
++    return stringifyJson({ ...data, amount: serializeAmount(quote.quoteData.amount) });
+   }
+ 
+   if (quote.method === 'bolt12') {
+-- 
+2.39.5 (Apple Git-154)
+

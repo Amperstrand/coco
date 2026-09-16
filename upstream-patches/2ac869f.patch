@@ -1,0 +1,82 @@
+From 2ac869f9b2fb96b8be6d918eebb42aa7a9cfb496 Mon Sep 17 00:00:00 2001
+From: amperstand <atlas@oh-my-opencode.com>
+Date: Fri, 28 Aug 2026 22:20:41 +0200
+Subject: [PATCH] fix(indexeddb): preserve row.method when hydrating stateful
+ mint quotes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+rowToMintQuote hardcoded method 'bolt11' for every stateful
+(non-onchain/bolt12) row, so declaration-merged custom methods
+deserialized as bolt11 quotes — breaking quote lookup, capability
+checks, and handler routing after persistence.
+---
+ packages/core/package.json                                 | 2 +-
+ packages/indexeddb/dist/index.js                           | 2 +-
+ packages/indexeddb/package.json                            | 2 +-
+ packages/indexeddb/src/repositories/MintQuoteRepository.ts | 4 ++--
+ 4 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/packages/core/package.json b/packages/core/package.json
+index 41206e39..2aa0a82f 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@cashu/coco-core",
+-  "version": "1.0.3",
++  "version": "1.0.4",
+   "main": "dist/index.js",
+   "module": "dist/index.js",
+   "repository": {
+diff --git a/packages/indexeddb/dist/index.js b/packages/indexeddb/dist/index.js
+index 648886bc..67835a6d 100644
+--- a/packages/indexeddb/dist/index.js
++++ b/packages/indexeddb/dist/index.js
+@@ -1472,7 +1472,7 @@ function rowToMintQuote(row) {
+ 	const state = deriveBolt11MintQuoteState(amountPaid, amountIssued);
+ 	return {
+ 		mintUrl: row.mintUrl,
+-		method: "bolt11",
++		method: row.method,
+ 		quoteId: row.quoteId,
+ 		quote: row.quoteId,
+ 		state,
+diff --git a/packages/indexeddb/package.json b/packages/indexeddb/package.json
+index a2c58058..eb845f9b 100644
+--- a/packages/indexeddb/package.json
++++ b/packages/indexeddb/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@cashu/coco-indexeddb",
+-  "version": "1.0.3",
++  "version": "1.0.4",
+   "main": "dist/index.js",
+   "module": "dist/index.js",
+   "types": "dist/index.d.ts",
+diff --git a/packages/indexeddb/src/repositories/MintQuoteRepository.ts b/packages/indexeddb/src/repositories/MintQuoteRepository.ts
+index 97a610f1..5602b192 100644
+--- a/packages/indexeddb/src/repositories/MintQuoteRepository.ts
++++ b/packages/indexeddb/src/repositories/MintQuoteRepository.ts
+@@ -66,7 +66,7 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
+   const state = deriveBolt11MintQuoteState(amountPaid, amountIssued);
+   return {
+     mintUrl: row.mintUrl,
+-    method: 'bolt11',
++    method: row.method,
+     quoteId: row.quoteId,
+     quote: row.quoteId,
+     state,
+@@ -82,7 +82,7 @@ function rowToMintQuote(row: MintQuoteRow): MintQuote {
+     quoteData: { amount },
+     createdAt: row.createdAt,
+     updatedAt: row.updatedAt,
+-  };
++  } as MintQuote;
+ }
+ 
+ function serializeQuoteData(quote: MintQuote): string {
+-- 
+2.39.5 (Apple Git-154)
+

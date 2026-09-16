@@ -6,12 +6,12 @@ import { n as OperationIdLock, t as MintScopedLock } from "./MintScopedLock-aaq-
 import { t as normalizeMeltMethodData } from "./MeltMethodHandler-DULduEuY.js";
 import { t as MintOperationService } from "./MintOperationService-D4ojVbT4.js";
 import { n as ExtensionRegistrationError, t as DuplicatePluginRegistrationError } from "./types-D5g5Uk4_.js";
-import { Amount, Amount as Amount$1, AuthManager, JSONInt, Mint, OutputData, PaymentRequest, PaymentRequestTransportType, Wallet, getDecodedToken, getDecodedToken as getDecodedToken$1, getEncodedToken, getEncodedToken as getEncodedToken$1, getTokenMetadata, getTokenMetadata as getTokenMetadata$1, isBlsKeyset, splitAmount, sumProofs } from "@cashu/cashu-ts";
+import { Amount, Amount as Amount$1, AuthManager, JSONInt, Mint, OutputData, PaymentRequest, PaymentRequestTransportType, Wallet, blindMessage, bytesToHex, getDecodedToken, getDecodedToken as getDecodedToken$1, getEncodedToken, getEncodedToken as getEncodedToken$1, getTokenMetadata, getTokenMetadata as getTokenMetadata$1, isBlsKeyset, splitAmount, sumProofs } from "@cashu/cashu-ts";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
-import { bytesToHex } from "@noble/curves/utils.js";
+import { bytesToHex as bytesToHex$1 } from "@noble/curves/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { HDKey } from "@scure/bip32";
-import { bytesToHex as bytesToHex$1 } from "@noble/hashes/utils.js";
+import { bytesToHex as bytesToHex$2 } from "@noble/hashes/utils.js";
 
 //#region services/AuthService.ts
 /**
@@ -625,7 +625,7 @@ var KeyRingService = class KeyRingService {
 		const signature = schnorr.sign(sha256(message), keyPair.secretKey);
 		const signedProof = {
 			...proof,
-			witness: JSON.stringify({ signatures: [bytesToHex(signature)] })
+			witness: JSON.stringify({ signatures: [bytesToHex$1(signature)] })
 		};
 		this.logger?.debug("Proof signed successfully", { publicKey });
 		return signedProof;
@@ -636,10 +636,10 @@ var KeyRingService = class KeyRingService {
 	* We prepend '02' to create a 33-byte SEC1 compressed format as expected by Cashu.
 	*/
 	getPublicKeyHex(secretKey) {
-		return "02" + bytesToHex(schnorr.getPublicKey(secretKey));
+		return "02" + bytesToHex$1(schnorr.getPublicKey(secretKey));
 	}
 	getCompressedPublicKeyHex(secretKey) {
-		return bytesToHex(secp256k1.getPublicKey(secretKey, true));
+		return bytesToHex$1(secp256k1.getPublicKey(secretKey, true));
 	}
 };
 
@@ -1314,7 +1314,16 @@ var PaymentRequestService = class {
 		const amount = intent.amount;
 		const amountUnchanged = request.amount?.equals(amount) === true;
 		if (amountUnchanged && !request.paymentRequest.nut10 && !request.spendingCondition) return request;
-		const paymentRequest = amountUnchanged ? request.paymentRequest : new PaymentRequest(request.paymentRequest.transport, request.paymentRequest.id, amount, request.unit, request.paymentRequest.mints, request.paymentRequest.description, request.paymentRequest.singleUse, request.paymentRequest.nut10);
+		const paymentRequest = amountUnchanged ? request.paymentRequest : new PaymentRequest({
+			transport: request.paymentRequest.transport,
+			id: request.paymentRequest.id,
+			amount,
+			unit: request.unit,
+			mints: request.paymentRequest.mints,
+			description: request.paymentRequest.description,
+			singleUse: request.paymentRequest.singleUse,
+			nut10: request.paymentRequest.nut10
+		});
 		const spendingCondition = this.resolveSpendingCondition(paymentRequest);
 		const payableMints = await this.findMatchingMints(paymentRequest, request.unit, spendingCondition);
 		return {
@@ -1371,7 +1380,15 @@ var PaymentRequestReceiveService = class {
 				description: input.description,
 				singleUse
 			});
-			const paymentRequest = new PaymentRequest(paymentRequestTransports, requestId, amount, unit, mints.length > 0 ? mints : void 0, input.description, singleUse);
+			const paymentRequest = new PaymentRequest({
+				transport: paymentRequestTransports,
+				id: requestId,
+				amount,
+				unit,
+				mints: mints.length > 0 ? mints : void 0,
+				description: input.description,
+				singleUse
+			});
 			const encodedRequest = input.encoding === "creqA" ? paymentRequest.toEncodedCreqA() : paymentRequest.toEncodedCreqB();
 			const now = Date.now();
 			const operation = {
@@ -1939,7 +1956,7 @@ var PaymentRequestReceiveService = class {
 			unit: payload.unit,
 			proofs: proofSummaries
 		});
-		return bytesToHex$1(sha256(new TextEncoder().encode(canonical)));
+		return bytesToHex$2(sha256(new TextEncoder().encode(canonical)));
 	}
 	canonicalizePayloadHashValue(value) {
 		if (value === void 0) return;
@@ -2993,7 +3010,67 @@ var ProofService = class {
 		});
 		return unspentProofs;
 	}
+	/**
+	* Swap future-unit proofs into a keep/send split where EVERY replacement
+	* proof's secret carries the NUT-10 `tags` (the NUT-32 future tag with
+	* the terms URI). The mint enforces unit preservation; the tags preserve
+	* the terms commitment through the split. Inputs are marked spent, the
+	* new proofs saved, exactly like the pre-melt swap in
+	* BaseQuoteMeltHandler.
+	*/
+	async swapFutureUnits(mintUrl, unit, tags, split) {
+		const total = split.keep + split.send;
+		if (split.keep < 0n || split.send < 0n || total <= 0n) throw new ProofValidationError("future swap needs non-negative amounts and a positive total");
+		const { wallet, keys, keysetId } = await this.walletService.getWalletWithActiveKeysetId(mintUrl, unit);
+		const readyProofs = await this.getReadyProofs(mintUrl, { units: [unit] });
+		const have = sumProofs(readyProofs).toBigInt();
+		if (have < total) throw new ProofValidationError(`future swap needs ${total} ${unit}, wallet has ${have}`);
+		const selected = [];
+		let selectedSum = 0n;
+		for (const proof of readyProofs) {
+			selected.push(proof);
+			selectedSum += proof.amount.toBigInt();
+			if (selectedSum >= total) break;
+		}
+		const mkTagged = (amount) => {
+			const secretBytes = new TextEncoder().encode(JSON.stringify({
+				secret: secretHex(),
+				tags
+			}));
+			const { B_, r } = blindMessage(secretBytes);
+			return new OutputData({
+				amount,
+				id: keysetId,
+				B_: B_.toHex(true)
+			}, r, secretBytes);
+		};
+		const keepData = splitAmount(Amount$1.from(split.keep), keys.keys).map(mkTagged);
+		const sendData = splitAmount(Amount$1.from(split.send), keys.keys).map(mkTagged);
+		await this.setProofState(mintUrl, selected.map((p) => p.secret), "inflight");
+		const outputConfig = {
+			send: {
+				type: "custom",
+				data: sendData
+			},
+			keep: {
+				type: "custom",
+				data: keepData
+			}
+		};
+		const { keep, send } = await wallet.send(Amount$1.from(total), selected, void 0, outputConfig);
+		await this.setProofState(mintUrl, selected.map((p) => p.secret), "spent");
+		await this.saveProofs(mintUrl, [...mapProofToCoreProof(mintUrl, "ready", keep, { unit }), ...mapProofToCoreProof(mintUrl, "ready", send, { unit })]);
+		return {
+			keep,
+			send
+		};
+	}
 };
+function secretHex() {
+	const bytes = new Uint8Array(32);
+	globalThis.crypto.getRandomValues(bytes);
+	return bytesToHex(bytes);
+}
 
 //#endregion
 //#region services/SeedService.ts
@@ -9574,7 +9651,7 @@ var MintBolt11Handler = class {
 		if (!pubkey) return void 0;
 		const key = await this.keyRingService.getMintQuoteKeyPair(pubkey);
 		if (!key) throw new MintQuoteKeyError("Missing NUT-20 mint quote key for locked BOLT11 quote");
-		return { privkey: bytesToHex(key.secretKey) };
+		return { privkey: bytesToHex$1(key.secretKey) };
 	}
 };
 
@@ -9659,7 +9736,7 @@ var MintOnchainHandler = class {
 		if (assessment.status === "invalid") throw new MintQuoteValidationError(`Onchain mint quote ${ctx.operation.quoteId} is not claimable: ${assessment.status}`);
 		return {
 			status: "ISSUED",
-			proofs: await ctx.wallet.mintProofsOnchain(ctx.operation.amount, remoteQuote, bytesToHex(quoteKey.secretKey), void 0, {
+			proofs: await ctx.wallet.mintProofsOnchain(ctx.operation.amount, remoteQuote, bytesToHex$1(quoteKey.secretKey), void 0, {
 				type: "custom",
 				data: outputData.keep
 			})
@@ -9713,7 +9790,7 @@ var MintOnchainHandler = class {
 		};
 		const outputData = deserializeOutputData(operation.outputData);
 		try {
-			const proofs = await ctx.wallet.mintProofsOnchain(operation.amount, remoteQuote, bytesToHex(quoteKey.secretKey), void 0, {
+			const proofs = await ctx.wallet.mintProofsOnchain(operation.amount, remoteQuote, bytesToHex$1(quoteKey.secretKey), void 0, {
 				type: "custom",
 				data: outputData.keep
 			});
@@ -9880,7 +9957,7 @@ var MintBolt12Handler = class {
 		try {
 			return {
 				status: "ISSUED",
-				proofs: await ctx.wallet.mintProofsBolt12(ctx.operation.amount, remoteQuote, bytesToHex(quoteKey.secretKey), void 0, {
+				proofs: await ctx.wallet.mintProofsBolt12(ctx.operation.amount, remoteQuote, bytesToHex$1(quoteKey.secretKey), void 0, {
 					type: "custom",
 					data: outputData.keep
 				})
@@ -9938,7 +10015,7 @@ var MintBolt12Handler = class {
 		};
 		const outputData = deserializeOutputData(operation.outputData);
 		try {
-			const proofs = await ctx.wallet.mintProofsBolt12(operation.amount, remoteQuote, bytesToHex(quoteKey.secretKey), void 0, {
+			const proofs = await ctx.wallet.mintProofsBolt12(operation.amount, remoteQuote, bytesToHex$1(quoteKey.secretKey), void 0, {
 				type: "custom",
 				data: outputData.keep
 			});
@@ -12429,6 +12506,13 @@ var Manager = class {
 		await this.meltSettlementProcessor?.setInterestRegistrar(void 0);
 		await this.meltQuoteWatcher.stop();
 		this.meltQuoteWatcher = void 0;
+	}
+	/**
+	* Split future-unit proofs into a keep/send pair where every replacement
+	* proof keeps the NUT-10 `tags` (NUT-32 terms commitment) in its secret.
+	*/
+	async swapFutureUnits(mintUrl, unit, tags, split) {
+		return this.proofService.swapFutureUnits(mintUrl, unit, tags, split);
 	}
 	async enableMeltSettlementProcessor(options) {
 		if (this.disposed) return false;

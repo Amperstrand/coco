@@ -1,0 +1,143 @@
+From 0ed646f00c608caeb825cbbb17df7b671be45a45 Mon Sep 17 00:00:00 2001
+From: amperstand <atlas@oh-my-opencode.com>
+Date: Sat, 29 Aug 2026 09:55:17 +0200
+Subject: [PATCH] fix(core): resume settlement for executing melt ops on boot
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+initializeExistingPendingOperations filtered boot-enumerated melt
+operations to state 'pending' only, but an operation awaiting payout
+settlement sits in 'executing' (the repo's getPending already returns
+both states). After a page reload mid-payout the operation was dropped
+at boot, so nothing watched the quote and a later settlement was never
+observed — the withdraw stayed executing forever.
+
+Widen the filter to settlement-eligible states (pending + executing);
+checkPendingOperation already routes by the operation's actual state.
+---
+ packages/core/dist/index.js                   |  8 ++++----
+ packages/core/package.json                    |  2 +-
+ .../watchers/MeltSettlementProcessor.ts       | 20 +++++++++++++------
+ packages/indexeddb/package.json               |  2 +-
+ 4 files changed, 20 insertions(+), 12 deletions(-)
+
+diff --git a/packages/core/dist/index.js b/packages/core/dist/index.js
+index 45ddb24a..adc3a8ad 100644
+--- a/packages/core/dist/index.js
++++ b/packages/core/dist/index.js
+@@ -4371,8 +4371,8 @@ var MeltQuoteWatcherService = class {
+ function toKey$1(mintUrl, method, quoteId) {
+ 	return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
+ }
+-function isPendingMeltOperation(operation) {
+-	return operation.state === "pending";
++function isSettlementEligibleMeltOperation(operation) {
++	return operation.state === "pending" || operation.state === "executing";
+ }
+ var MeltSettlementInterestRegistry = class {
+ 	operationIdsByQuoteKey = /* @__PURE__ */ new Map();
+@@ -4464,7 +4464,7 @@ var MeltSettlementProcessor = class {
+ 		this.running = true;
+ 		this.logger?.info("MeltSettlementProcessor started");
+ 		this.offPending = this.bus.on("melt-op:pending", async ({ operation }) => {
+-			if (isPendingMeltOperation(operation)) await this.registerOperationInterest(operation);
++			if (isSettlementEligibleMeltOperation(operation)) await this.registerOperationInterest(operation);
+ 		});
+ 		this.offQuoteUpdated = this.bus.on("melt-quote:updated", async ({ mintUrl, method, quoteId, quote }) => {
+ 			const operationIds = this.interests.getOperationIds(mintUrl, method, quoteId);
+@@ -4514,7 +4514,7 @@ var MeltSettlementProcessor = class {
+ 			if (!this.running) return;
+ 			for (const operation of operations) {
+ 				if (!this.running) return;
+-				if (isPendingMeltOperation(operation)) await this.registerOperationInterest(operation);
++				if (isSettlementEligibleMeltOperation(operation)) await this.registerOperationInterest(operation);
+ 			}
+ 		} catch (err) {
+ 			this.logger?.warn("Failed to initialize pending melt settlement interest", { err });
+diff --git a/packages/core/package.json b/packages/core/package.json
+index ae6489f0..7f2a46bc 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@cashu/coco-core",
+-  "version": "1.0.6",
++  "version": "1.0.7",
+   "main": "dist/index.js",
+   "module": "dist/index.js",
+   "repository": {
+diff --git a/packages/core/services/watchers/MeltSettlementProcessor.ts b/packages/core/services/watchers/MeltSettlementProcessor.ts
+index 3ae97e9c..3f672a55 100644
+--- a/packages/core/services/watchers/MeltSettlementProcessor.ts
++++ b/packages/core/services/watchers/MeltSettlementProcessor.ts
+@@ -2,7 +2,11 @@ import type { EventBus, CoreEvents } from '@core/events';
+ import type { MeltQuoteOperationInterest } from '@core/services/watchers/MeltQuoteWatcherService.ts';
+ import type { Logger } from '../../logging/Logger.ts';
+ import type { MeltOperationService } from '../../operations/melt/MeltOperationService.ts';
+-import type { MeltOperation, PendingMeltOperation } from '../../operations/melt/MeltOperation.ts';
++import type {
++  ExecutingMeltOperation,
++  MeltOperation,
++  PendingMeltOperation,
++} from '../../operations/melt/MeltOperation.ts';
+ import type { MeltMethod } from '../../operations/melt/MeltMethodHandler.ts';
+ import { normalizeMintUrl } from '../../utils.ts';
+ 
+@@ -35,8 +39,10 @@ function toKey(mintUrl: string, method: MeltMethod, quoteId: string): QuoteKey {
+   return `${normalizeMintUrl(mintUrl)}::${method}::${quoteId}`;
+ }
+ 
+-function isPendingMeltOperation(operation: MeltOperation): operation is PendingMeltOperation {
+-  return operation.state === 'pending';
++function isSettlementEligibleMeltOperation(
++  operation: MeltOperation,
++): operation is PendingMeltOperation | ExecutingMeltOperation {
++  return operation.state === 'pending' || operation.state === 'executing';
+ }
+ 
+ class MeltSettlementInterestRegistry {
+@@ -171,7 +177,7 @@ export class MeltSettlementProcessor {
+     this.logger?.info('MeltSettlementProcessor started');
+ 
+     this.offPending = this.bus.on('melt-op:pending', async ({ operation }) => {
+-      if (isPendingMeltOperation(operation)) {
++      if (isSettlementEligibleMeltOperation(operation)) {
+         await this.registerOperationInterest(operation);
+       }
+     });
+@@ -255,7 +261,7 @@ export class MeltSettlementProcessor {
+         if (!this.running) {
+           return;
+         }
+-        if (isPendingMeltOperation(operation)) {
++        if (isSettlementEligibleMeltOperation(operation)) {
+           await this.registerOperationInterest(operation);
+         }
+       }
+@@ -264,7 +270,9 @@ export class MeltSettlementProcessor {
+     }
+   }
+ 
+-  private async registerOperationInterest(operation: PendingMeltOperation): Promise<void> {
++  private async registerOperationInterest(
++    operation: PendingMeltOperation | ExecutingMeltOperation,
++  ): Promise<void> {
+     if (!this.running) {
+       return;
+     }
+diff --git a/packages/indexeddb/package.json b/packages/indexeddb/package.json
+index 19d019d4..e02a166d 100644
+--- a/packages/indexeddb/package.json
++++ b/packages/indexeddb/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@cashu/coco-indexeddb",
+-  "version": "1.0.6",
++  "version": "1.0.7",
+   "main": "dist/index.js",
+   "module": "dist/index.js",
+   "types": "dist/index.d.ts",
+-- 
+2.39.5 (Apple Git-154)
+
