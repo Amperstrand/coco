@@ -1187,10 +1187,6 @@ export class ProofService {
       selected.map((p) => p.secret),
       'spent',
     );
-    await this.saveProofs(
-      mintUrl,
-      mapProofToCoreProof(mintUrl, 'ready', fresh, { unit }),
-    );
 
     // Partition by denomination: consume the send denominations from the
     // fresh proofs (greedy on exact matches), the rest stays as keep.
@@ -1212,6 +1208,13 @@ export class ProofService {
         `future swap denominations did not resolve: missing ${wanted.join(', ')}`,
       );
     }
+    // Bearer-transfer semantics: the send subset is NOT persisted — it
+    // exists only in the exported token. Persisting it would leave the
+    // sender a spendable copy of what was handed over.
+    await this.saveProofs(
+      mintUrl,
+      mapProofToCoreProof(mintUrl, 'ready', keep, { unit }),
+    );
     return { keep, send };
   }
 }

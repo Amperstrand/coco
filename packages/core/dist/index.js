@@ -3032,6 +3032,8 @@ var ProofService = class {
 			selectedSum += proof.amount.toBigInt();
 			if (selectedSum >= total) break;
 		}
+		const sendDenoms = splitAmount(Amount$1.from(split.send), keys.keys).map((a) => a.toBigInt());
+		const keepDenoms = splitAmount(Amount$1.from(split.keep), keys.keys).map((a) => a.toBigInt());
 		const mkTagged = (amount) => {
 			const secretBytes = new TextEncoder().encode(JSON.stringify({
 				secret: secretHex(),
@@ -3044,22 +3046,26 @@ var ProofService = class {
 				B_: B_.toHex(true)
 			}, r, secretBytes);
 		};
-		const keepData = splitAmount(Amount$1.from(split.keep), keys.keys).map(mkTagged);
-		const sendData = splitAmount(Amount$1.from(split.send), keys.keys).map(mkTagged);
+		const outputs = [...sendDenoms, ...keepDenoms].map((amount) => mkTagged(Amount$1.from(amount)));
 		await this.setProofState(mintUrl, selected.map((p) => p.secret), "inflight");
-		const outputConfig = {
-			send: {
-				type: "custom",
-				data: sendData
-			},
-			keep: {
-				type: "custom",
-				data: keepData
-			}
-		};
-		const { keep, send } = await wallet.send(Amount$1.from(split.send), selected, void 0, outputConfig);
+		const fresh = await wallet.receive(selected, void 0, {
+			type: "custom",
+			data: outputs
+		});
 		await this.setProofState(mintUrl, selected.map((p) => p.secret), "spent");
-		await this.saveProofs(mintUrl, [...mapProofToCoreProof(mintUrl, "ready", keep, { unit }), ...mapProofToCoreProof(mintUrl, "ready", send, { unit })]);
+		await this.saveProofs(mintUrl, mapProofToCoreProof(mintUrl, "ready", fresh, { unit }));
+		const wanted = [...sendDenoms];
+		const send = [];
+		const keep = [];
+		for (const proof of fresh) {
+			const amount = proof.amount.toBigInt();
+			const idx = wanted.indexOf(amount);
+			if (idx !== -1) {
+				wanted.splice(idx, 1);
+				send.push(proof);
+			} else keep.push(proof);
+		}
+		if (wanted.length > 0) throw new ProofValidationError(`future swap denominations did not resolve: missing ${wanted.join(", ")}`);
 		return {
 			keep,
 			send
