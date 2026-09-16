@@ -1,4 +1,4 @@
-import type { OutputDataCreator } from '@cashu/cashu-ts';
+import type { OutputDataCreator, Proof } from '@cashu/cashu-ts';
 
 import type {
   Repositories,
@@ -609,6 +609,19 @@ export class Manager {
     await this.meltSettlementProcessor?.setInterestRegistrar(undefined);
     await this.meltQuoteWatcher.stop();
     this.meltQuoteWatcher = undefined;
+  }
+
+  /**
+   * Split future-unit proofs into a keep/send pair where every replacement
+   * proof keeps the NUT-10 `tags` (NUT-32 terms commitment) in its secret.
+   */
+  async swapFutureUnits(
+    mintUrl: string,
+    unit: string,
+    tags: string[][],
+    split: { keep: bigint; send: bigint },
+  ): Promise<{ keep: Proof[]; send: Proof[] }> {
+    return this.proofService.swapFutureUnits(mintUrl, unit, tags, split);
   }
 
   async enableMeltSettlementProcessor(options?: {
