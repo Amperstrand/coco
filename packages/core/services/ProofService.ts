@@ -1179,7 +1179,16 @@ export class ProofService {
       send: { type: 'custom' as const, data: sendData },
       keep: { type: 'custom' as const, data: keepData },
     };
-    const { keep, send } = await wallet.send(Amount.from(total), selected, undefined, outputConfig);
+    // wallet.send's first argument is the SEND-side amount (the value the
+    // recipient receives), NOT the input total — passing the total makes
+    // the send-side output bookkeeping diverge from outputConfig.send and
+    // wedges cashu-ts's balancing.
+    const { keep, send } = await wallet.send(
+      Amount.from(split.send),
+      selected,
+      undefined,
+      outputConfig,
+    );
     await this.setProofState(
       mintUrl,
       selected.map((p) => p.secret),
