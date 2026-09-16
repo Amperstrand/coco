@@ -1153,12 +1153,16 @@ export class ProofService {
       if (selectedSum >= total) break;
     }
 
+    // One custom output group covering the FULL input total — cashu-ts's
+    // wallet.send re-selects a minimal input subset internally, which
+    // desynchronizes any pre-planned keep/send split; wallet.receive
+    // consumes exactly the proofs handed to it. The send subset is
+    // carved out of the fresh proofs afterwards, by denomination.
+    const sendDenoms = splitAmount(Amount.from(split.send), keys.keys).map((a) => a.toBigInt());
+    const keepDenoms = splitAmount(Amount.from(split.keep), keys.keys).map((a) => a.toBigInt());
     const mkTagged = (amount: Amount): OutputData => {
       const secretBytes = new TextEncoder().encode(
-        JSON.stringify({
-          secret: secretHex(),
-          tags,
-        }),
+        JSON.stringify({ secret: secretHex(), tags }),
       );
       const { B_, r } = blindMessage(secretBytes);
       return new OutputData(
@@ -1167,37 +1171,47 @@ export class ProofService {
         secretBytes,
       );
     };
-    const keepData = splitAmount(Amount.from(split.keep), keys.keys).map(mkTagged);
-    const sendData = splitAmount(Amount.from(split.send), keys.keys).map(mkTagged);
+    const outputs = [...sendDenoms, ...keepDenoms].map((amount) => mkTagged(Amount.from(amount)));
 
     await this.setProofState(
       mintUrl,
       selected.map((p) => p.secret),
       'inflight',
     );
-    const outputConfig = {
-      send: { type: 'custom' as const, data: sendData },
-      keep: { type: 'custom' as const, data: keepData },
-    };
-    // wallet.send's first argument is the SEND-side amount (the value the
-    // recipient receives), NOT the input total — passing the total makes
-    // the send-side output bookkeeping diverge from outputConfig.send and
-    // wedges cashu-ts's balancing.
-    const { keep, send } = await wallet.send(
-      Amount.from(split.send),
-      selected,
-      undefined,
-      outputConfig,
-    );
+    const fresh = await wallet.receive(selected, undefined, {
+      type: 'custom',
+      data: outputs,
+    });
     await this.setProofState(
       mintUrl,
       selected.map((p) => p.secret),
       'spent',
     );
-    await this.saveProofs(mintUrl, [
-      ...mapProofToCoreProof(mintUrl, 'ready', keep, { unit }),
-      ...mapProofToCoreProof(mintUrl, 'ready', send, { unit }),
-    ]);
+    await this.saveProofs(
+      mintUrl,
+      mapProofToCoreProof(mintUrl, 'ready', fresh, { unit }),
+    );
+
+    // Partition by denomination: consume the send denominations from the
+    // fresh proofs (greedy on exact matches), the rest stays as keep.
+    const wanted = [...sendDenoms];
+    const send: Proof[] = [];
+    const keep: Proof[] = [];
+    for (const proof of fresh) {
+      const amount = proof.amount.toBigInt();
+      const idx = wanted.indexOf(amount);
+      if (idx !== -1) {
+        wanted.splice(idx, 1);
+        send.push(proof);
+      } else {
+        keep.push(proof);
+      }
+    }
+    if (wanted.length > 0) {
+      throw new ProofValidationError(
+        `future swap denominations did not resolve: missing ${wanted.join(', ')}`,
+      );
+    }
     return { keep, send };
   }
 }

@@ -3057,7 +3057,7 @@ var ProofService = class {
 				data: keepData
 			}
 		};
-		const { keep, send } = await wallet.send(Amount$1.from(total), selected, void 0, outputConfig);
+		const { keep, send } = await wallet.send(Amount$1.from(split.send), selected, void 0, outputConfig);
 		await this.setProofState(mintUrl, selected.map((p) => p.secret), "spent");
 		await this.saveProofs(mintUrl, [...mapProofToCoreProof(mintUrl, "ready", keep, { unit }), ...mapProofToCoreProof(mintUrl, "ready", send, { unit })]);
 		return {
