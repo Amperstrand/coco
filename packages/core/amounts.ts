@@ -28,11 +28,7 @@ export function normalizeUnit(unit?: string, options?: { defaultUnit?: string })
     throw new UnitValidationError('Unit is required');
   }
 
-  // NUT-32 future units are case-sensitive by grammar (uppercase T/Z
-  // separators; lowercase is explicitly rejected) — currency-style
-  // lowercasing must not touch them.
-  const trimmed = rawUnit.trim();
-  const normalized = trimmed.startsWith('future:') ? trimmed : trimmed.toLowerCase();
+  const normalized = rawUnit.trim().toLowerCase();
   if (!normalized) {
     throw new UnitValidationError('Unit cannot be empty');
   }
