@@ -32,6 +32,7 @@ import type { FinalizeResult } from './MeltMethodHandler';
 import { MintScopedLock } from '../MintScopedLock';
 import { OperationIdLock } from '../OperationIdLock';
 import { DEFAULT_UNIT, normalizeUnit } from '../../amounts.ts';
+import { Amount } from '@cashu/cashu-ts';
 import type { QuoteLifecycle } from '../../quotes/QuoteLifecycle';
 import { resolveOnchainMeltFeeOption, type MeltQuote } from '../../models/MeltQuote.ts';
 import type { MeltQuoteRef, QuoteIdentity } from '../../models/QuoteIdentity.ts';
@@ -497,6 +498,21 @@ export class MeltOperationService {
         operation: pendingOp,
         canonicalQuote,
       });
+
+      // Recover orphaned change: if the melt created blank outputs (potential
+      // change) but the settled response carried no change signatures —
+      // known to happen on cdk mints where the poll path omits change for
+      // custom payment methods — attempt a targeted restore of those outputs.
+      // See: https://github.com/cashubtc/cdk/issues/2792
+      if (
+        finalizeResult &&
+        this.hasOrphanedChange(pendingOp, finalizeResult)
+      ) {
+        const recoveredChangeAmount = await this.recoverOrphanedChange(pendingOp);
+        if (recoveredChangeAmount !== null) {
+          finalizeResult.changeAmount = recoveredChangeAmount;
+        }
+      }
 
       const finalized: FinalizedMeltOperation = {
         ...pendingOp,
@@ -981,5 +997,43 @@ export class MeltOperationService {
   async getPreparedOperations(): Promise<PreparedMeltOperation[]> {
     const ops = await this.meltOperationRepository.getByState('prepared');
     return ops.filter((op): op is PreparedMeltOperation => op.state === 'prepared');
+  }
+
+  private hasOrphanedChange(
+    op: PendingMeltOperation,
+    result: FinalizeResult<MeltMethod>,
+  ): boolean {
+    if (!op.changeOutputData) return false;
+    const changeAmount = result.changeAmount;
+    return changeAmount === undefined || changeAmount.toNumber() === 0;
+  }
+
+  private async recoverOrphanedChange(
+    op: PendingMeltOperation,
+  ): Promise<Amount | null> {
+    try {
+      const recovered = await this.proofService.recoverProofsFromOutputData(
+        op.mintUrl,
+        op.changeOutputData,
+        { unit: op.unit, createdByOperationId: op.id },
+      );
+      if (recovered.length === 0) return null;
+      const total = Amount.sum(recovered.map((p) => p.amount));
+      this.logger?.warn('Recovered orphaned melt change via restore', {
+        operationId: op.id,
+        mintUrl: op.mintUrl,
+        recoveredProofs: recovered.length,
+        recoveredAmount: total.toNumber(),
+        upstreamIssue: 'cashubtc/cdk#2792',
+      });
+      return total;
+    } catch (err) {
+      this.logger?.error('Failed to recover orphaned melt change', {
+        operationId: op.id,
+        mintUrl: op.mintUrl,
+        error: err,
+      });
+      return null;
+    }
   }
 }
