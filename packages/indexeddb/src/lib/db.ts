@@ -298,6 +298,7 @@ export interface MeltOperationRow {
   changeAmount?: string | number | null;
   effectiveFee?: string | number | null;
   finalizedDataJson?: string | null;
+  pendingChangeJson?: string | null;
 }
 
 export interface AuthSessionRow {

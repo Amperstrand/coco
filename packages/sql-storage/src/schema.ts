@@ -1506,6 +1506,12 @@ const MIGRATIONS: readonly Migration[] = [
       GROUP BY purpose;
     `,
   },
+  {
+    id: '039_melt_operation_pending_change',
+    sql: `
+      ALTER TABLE coco_cashu_melt_operations ADD COLUMN pendingChangeJson TEXT;
+    `,
+  },
 ];
 
 // Export for testing

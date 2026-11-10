@@ -583,7 +583,10 @@ describe('PollingTransport mint quote batching', () => {
 
     transport.on(mintUrl, 'message', () => {});
     subscribeToQuotes(transport, mintUrl, 'bolt11', 'cadence-sub', ['quote-a']);
-    await waitFor(() => startedAt.length === 2, 2_000);
+    // Generous budget: CI runners under coverage instrumentation can starve the
+    // 20ms requeue timer far beyond real time; only the >=18ms gap between turns
+    // is the contract under test, not how fast the runner reaches turn two.
+    await waitFor(() => startedAt.length === 2, 10_000);
 
     expect(startedAt[1]! - startedAt[0]!).toBeGreaterThanOrEqual(18);
     transport.closeAll();
