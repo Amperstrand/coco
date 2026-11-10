@@ -9,7 +9,7 @@
     "directory": "packages/core"
   },
   "devDependencies": {
-    "@cashu/coco-adapter-tests": "1.0.0",
+    "@cashu/coco-adapter-tests": "workspace:*",
     "typescript-eslint": "^8.40.0"
   },
   "peerDependencies": {

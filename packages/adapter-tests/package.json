@@ -11,7 +11,7 @@
     "directory": "packages/adapter-tests"
   },
   "devDependencies": {
-    "@cashu/coco-core": "1.0.0"
+    "@cashu/coco-core": "workspace:*"
   },
   "files": [
     "dist",

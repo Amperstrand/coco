@@ -16,7 +16,7 @@
   ],
   "devDependencies": {
     "@vitest/browser": "^3.2.4",
-    "@cashu/coco-adapter-tests": "1.0.0",
+    "@cashu/coco-adapter-tests": "workspace:*",
     "playwright": "^1.52.0",
     "vitest": "^3.2.4"
   },
