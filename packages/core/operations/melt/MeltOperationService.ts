@@ -504,10 +504,7 @@ export class MeltOperationService {
       // known to happen on cdk mints where the poll path omits change for
       // custom payment methods — attempt a targeted restore of those outputs.
       // See: https://github.com/cashubtc/cdk/issues/2792
-      if (
-        finalizeResult &&
-        this.hasOrphanedChange(pendingOp, finalizeResult)
-      ) {
+      if (finalizeResult && this.hasOrphanedChange(pendingOp, finalizeResult)) {
         const recoveredChangeAmount = await this.recoverOrphanedChange(pendingOp);
         if (recoveredChangeAmount !== null) {
           finalizeResult.changeAmount = recoveredChangeAmount;
@@ -999,18 +996,13 @@ export class MeltOperationService {
     return ops.filter((op): op is PreparedMeltOperation => op.state === 'prepared');
   }
 
-  private hasOrphanedChange(
-    op: PendingMeltOperation,
-    result: FinalizeResult<MeltMethod>,
-  ): boolean {
+  private hasOrphanedChange(op: PendingMeltOperation, result: FinalizeResult<MeltMethod>): boolean {
     if (!op.changeOutputData) return false;
     const changeAmount = result.changeAmount;
     return changeAmount === undefined || changeAmount.toNumber() === 0;
   }
 
-  private async recoverOrphanedChange(
-    op: PendingMeltOperation,
-  ): Promise<Amount | null> {
+  private async recoverOrphanedChange(op: PendingMeltOperation): Promise<Amount | null> {
     try {
       const recovered = await this.proofService.recoverProofsFromOutputData(
         op.mintUrl,
