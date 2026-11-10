@@ -191,9 +191,17 @@ describe('MeltSettlementProcessor', () => {
 
     await processor.start();
 
-    expect(registerOperationInterest).toHaveBeenCalledTimes(1);
+    // Since 0ed646f0, executing melt operations resume settlement on boot too:
+    // both existing pending and executing operations register interest.
+    expect(registerOperationInterest).toHaveBeenCalledTimes(2);
     expect(registerOperationInterest).toHaveBeenCalledWith({
       operationId: 'existing-pending',
+      mintUrl,
+      method: 'bolt11',
+      quoteId,
+    });
+    expect(registerOperationInterest).toHaveBeenCalledWith({
+      operationId: 'existing-executing',
       mintUrl,
       method: 'bolt11',
       quoteId,
@@ -202,15 +210,19 @@ describe('MeltSettlementProcessor', () => {
 
     await flushDeferredInitialChecks();
 
-    expect(checkPendingOperation).toHaveBeenCalledTimes(1);
-    expect(checkPendingOperation).toHaveBeenCalledWith('existing-pending');
+    expect(checkPendingOperation.mock.calls.map((call) => call[0])).toEqual([
+      'existing-pending',
+      'existing-executing',
+    ]);
 
     checkPendingOperation.mockClear();
 
     await emitQuoteUpdated();
 
-    expect(checkPendingOperation).toHaveBeenCalledTimes(1);
-    expect(checkPendingOperation).toHaveBeenCalledWith('existing-pending');
+    expect(checkPendingOperation.mock.calls.map((call) => call[0])).toEqual([
+      'existing-pending',
+      'existing-executing',
+    ]);
   });
 
   it('checks only operation ids with exact interest in the updated quote', async () => {

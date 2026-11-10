@@ -1606,13 +1606,13 @@ describe('ProofService', () => {
           toProof: (OutputData.prototype as any).toProof,
         })) as any,
         changeSigs as any,
-        { unit: 'sat', persistRecoveredProofs: false },
+        { unit: 'sat' },
       );
 
       // the zero-value sig was dropped, the nonzero one survived
       expect(result).toHaveLength(1);
-      expect(result[0]?.amount.toString()).toBe('7');
-      expect(toProofCalls).toEqual([{ amount: changeSigs[1].amount }]);
+      expect(result[0]?.amount?.toString()).toBe('7');
+      expect(toProofCalls).toEqual([{ amount: changeSigs[1]?.amount }]);
     });
 
     it('rejects restored signatures from a different-unit keyset', async () => {
