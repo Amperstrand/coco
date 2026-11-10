@@ -1,9 +1,11 @@
 import type { MeltMethodInputData, MeltOperationRepository } from '@cashu/coco-core/adapter';
 import {
   deserializeAmount,
+  deserializeBlindedSignatures,
   normalizeMeltMethodData,
   normalizeUnit,
   serializeAmount,
+  serializeBlindedSignatures,
   stringifyJson,
 } from '@cashu/coco-core/adapter';
 import type { IdbDb, MeltOperationRow } from '../lib/db.ts';
@@ -91,6 +93,15 @@ const rowToOperation = (row: MeltOperationRow): MeltOperation => {
     } as MeltOperation;
   }
 
+  if (row.state === 'pending') {
+    return {
+      ...operation,
+      pendingChange: row.pendingChangeJson
+        ? deserializeBlindedSignatures(JSON.parse(row.pendingChangeJson))
+        : undefined,
+    } as MeltOperation;
+  }
+
   return operation as MeltOperation;
 };
 
@@ -124,10 +135,15 @@ const operationToRow = (operation: MeltOperation): MeltOperationRow => {
       changeOutputDataJson: null,
       swapOutputDataJson: null,
       finalizedDataJson: null,
+      pendingChangeJson: null,
     };
   }
 
   const settlement = operation as MeltSettlementData;
+  const pendingChangeJson =
+    operation.state === 'pending' && operation.pendingChange && operation.pendingChange.length > 0
+      ? stringifyJson(serializeBlindedSignatures(operation.pendingChange))
+      : null;
 
   return {
     id: operation.id,
@@ -160,6 +176,7 @@ const operationToRow = (operation: MeltOperation): MeltOperationRow => {
       operation.state === 'finalized' && settlement.finalizedData !== undefined
         ? JSON.stringify(settlement.finalizedData)
         : null,
+    pendingChangeJson,
   };
 };
 

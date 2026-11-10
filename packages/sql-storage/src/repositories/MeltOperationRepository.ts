@@ -1,9 +1,11 @@
 import type { MeltMethodInputData, MeltOperationRepository } from '@cashu/coco-core/adapter';
 import {
   deserializeAmount,
+  deserializeBlindedSignatures,
   normalizeMeltMethodData,
   normalizeUnit,
   serializeAmount,
+  serializeBlindedSignatures,
   stringifyJson,
 } from '@cashu/coco-core/adapter';
 import type { SqlDatabase, SqlValue } from '../index.ts';
@@ -44,6 +46,7 @@ interface MeltOperationRow {
   changeAmount: string | number | null;
   effectiveFee: string | number | null;
   finalizedDataJson: string | null;
+  pendingChangeJson: string | null;
 }
 
 const preparedStates: MeltOperationState[] = [
@@ -109,6 +112,15 @@ const rowToOperation = (row: MeltOperationRow): MeltOperation => {
     } as MeltOperation;
   }
 
+  if (row.state === 'pending') {
+    return {
+      ...operation,
+      pendingChange: row.pendingChangeJson
+        ? deserializeBlindedSignatures(JSON.parse(row.pendingChangeJson))
+        : undefined,
+    } as MeltOperation;
+  }
+
   return operation as MeltOperation;
 };
 
@@ -140,6 +152,7 @@ const operationToParams = (operation: MeltOperation): SqlValue[] => {
       null,
       null,
       null,
+      null,
     ];
   }
 
@@ -155,6 +168,10 @@ const operationToParams = (operation: MeltOperation): SqlValue[] => {
   const finalizedDataJson =
     operation.state === 'finalized' && settlement.finalizedData !== undefined
       ? JSON.stringify(settlement.finalizedData)
+      : null;
+  const pendingChangeJson =
+    operation.state === 'pending' && operation.pendingChange && operation.pendingChange.length > 0
+      ? stringifyJson(serializeBlindedSignatures(operation.pendingChange))
       : null;
 
   return [
@@ -179,6 +196,7 @@ const operationToParams = (operation: MeltOperation): SqlValue[] => {
     changeAmount,
     effectiveFee,
     finalizedDataJson,
+    pendingChangeJson,
   ];
 };
 
@@ -207,8 +225,8 @@ export class SqliteMeltOperationRepository implements MeltOperationRepository {
     const params = operationToParams(operation);
     await this.db.run(
       `INSERT INTO coco_cashu_melt_operations
-         (id, mintUrl, state, createdAt, updatedAt, error, method, methodDataJson, quoteId, unit, amount, fee_reserve, swap_fee, needsSwap, inputAmount, inputProofSecretsJson, changeOutputDataJson, swapOutputDataJson, changeAmount, effectiveFee, finalizedDataJson)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, mintUrl, state, createdAt, updatedAt, error, method, methodDataJson, quoteId, unit, amount, fee_reserve, swap_fee, needsSwap, inputAmount, inputProofSecretsJson, changeOutputDataJson, swapOutputDataJson, changeAmount, effectiveFee, finalizedDataJson, pendingChangeJson)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params,
     );
   }
@@ -250,10 +268,14 @@ export class SqliteMeltOperationRepository implements MeltOperationRepository {
     }
 
     const settlement = operation as MeltSettlementData;
+    const pendingChangeJson =
+      operation.state === 'pending' && operation.pendingChange && operation.pendingChange.length > 0
+        ? stringifyJson(serializeBlindedSignatures(operation.pendingChange))
+        : null;
 
     await this.db.run(
       `UPDATE coco_cashu_melt_operations
-        SET state = ?, updatedAt = ?, error = ?, method = ?, methodDataJson = ?, quoteId = ?, unit = ?, amount = ?, fee_reserve = ?, swap_fee = ?, needsSwap = ?, inputAmount = ?, inputProofSecretsJson = ?, changeOutputDataJson = ?, swapOutputDataJson = ?, changeAmount = ?, effectiveFee = ?, finalizedDataJson = ?
+        SET state = ?, updatedAt = ?, error = ?, method = ?, methodDataJson = ?, quoteId = ?, unit = ?, amount = ?, fee_reserve = ?, swap_fee = ?, needsSwap = ?, inputAmount = ?, inputProofSecretsJson = ?, changeOutputDataJson = ?, swapOutputDataJson = ?, changeAmount = ?, effectiveFee = ?, finalizedDataJson = ?, pendingChangeJson = ?
         WHERE id = ?`,
       [
         operation.state,
@@ -280,6 +302,7 @@ export class SqliteMeltOperationRepository implements MeltOperationRepository {
         operation.state === 'finalized' && settlement.finalizedData !== undefined
           ? JSON.stringify(settlement.finalizedData)
           : null,
+        pendingChangeJson,
         operation.id,
       ],
     );

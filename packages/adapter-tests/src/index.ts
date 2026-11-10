@@ -1,4 +1,5 @@
 import { Amount } from '@cashu/cashu-ts';
+import type { SerializedBlindedSignature } from '@cashu/cashu-ts';
 import {
   type Mint,
   type Keyset,
@@ -328,6 +329,7 @@ type Expectation = {
 
 type ExpectApi = {
   toBe(value: unknown): void;
+  toEqual(value: unknown): void;
   toHaveLength(len: number): void;
   toBeGreaterThan(value: number): void;
   toBeDefined(): void;
@@ -1815,6 +1817,50 @@ export async function runMeltOperationRepositoryContract(
         expect(stored!.state).toBe('init');
         expect(stored!.quoteId).toBe('init-melt-quote');
         expect(stored!.unit).toBe('usd');
+      } finally {
+        await dispose();
+      }
+    });
+
+    it('round-trips pendingChange on pending melt operations', async () => {
+      const { repositories, dispose } = await options.createRepositories();
+      try {
+        const pendingChange: SerializedBlindedSignature[] = [
+          { id: 'keyset-1', amount: Amount.from(21), C_: 'C_pending_change_1' },
+          { id: 'keyset-1', amount: Amount.from(2), C_: 'C_pending_change_2' },
+        ];
+        const operation = createDummyMeltOperation({
+          id: 'melt-pending-change',
+          quoteId: 'melt-quote-pending-change',
+        });
+        await repositories.meltOperationRepository.create(operation);
+
+        await repositories.meltOperationRepository.update({
+          id: operation.id,
+          state: 'pending',
+          mintUrl: operation.mintUrl,
+          unit: operation.unit,
+          method: operation.method,
+          methodData: operation.methodData,
+          createdAt: operation.createdAt,
+          updatedAt: operation.updatedAt,
+          quoteId: 'melt-quote-pending-change',
+          amount: Amount.from(112),
+          fee_reserve: Amount.from(1),
+          swap_fee: Amount.zero(),
+          needsSwap: false,
+          inputAmount: Amount.from(112),
+          inputProofSecrets: ['melt-secret-1'],
+          changeOutputData: { keep: [], send: [] },
+          pendingChange,
+        } satisfies Extract<MeltOperation, { state: 'pending' }>);
+
+        const stored = await repositories.meltOperationRepository.getById(operation.id);
+
+        expect(stored).toBeDefined();
+        expect(stored!.state).toBe('pending');
+        if (stored?.state !== 'pending') throw new Error('expected pending melt operation');
+        expect(stored.pendingChange).toEqual(pendingChange);
       } finally {
         await dispose();
       }
