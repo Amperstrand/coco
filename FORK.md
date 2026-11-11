@@ -29,6 +29,37 @@ showcasing**. Not a deployment fork, not an upstream-contribution staging area.
 | `release/1.0.x` (+ tag `v1.0.10`) | **frozen** | The deployment-fork era, end-stamped 2026-11-10. Contains everything above in working order, incl. the validated money-safety cluster. |
 | `pin/*` tags | **frozen** | Containment for consumer-pinned dangling SHAs — never delete. |
 
+## Update 2026-11-11 — upstream landed #277 (crash recovery for `rolling_back`)
+
+Upstream merged the Send half of cashubtc/coco#277 today: PR #613
+"fix(core): settle interrupted send reclaims during recovery" (12:59 UTC)
+plus pre-merge commit e475563 "fence reclaim abandonment and settle stored
+reclaim outputs" (08:40 UTC, review follow-ups). The Melt `rolling_back`
+recovery was already on master (refresh quote → UNPAID → release
+"Recovered legacy rollback", else defer). Verified by reading master's
+`SendOperationService.ts` / `MeltOperationService.ts` (2026-11-11).
+
+Consequences for this fork:
+
+- **June crash-recovery patch SUPERSEDED.** `9d07b84` ("feat(core): automatic
+  recovery for rolling_back operations (Send + Melt)", riding the
+  `pin/lnforward` / `pin/cashuexchange` lineages) is now covered upstream for
+  both halves — master settles from mint evidence with a stored reclaim
+  request, strict `requireComplete` NUT-09 restore, recipient-claimed →
+  finalized in one transaction, and `ops.send.recovery.run()` as the on-demand
+  trigger. Keep `pin/*` frozen as history; do not carry the patch forward.
+- **settlement-resume residue is now ~1 commit.** `fix/settlement-resume` is
+  1 commit / 1 file (`MeltSettlementProcessor.ts`) ahead of master as of today
+  (was "upstream still lacks it" in the table above — stale now). Re-diff
+  against master before any revive; the settlement-processor architecture
+  itself was adopted upstream.
+- **Money-safety cluster unaffected** (`fix/pending-melt-change-preservation`
+  still 18 commits ahead — different bug class: change preservation, not
+  crash recovery). Revive triggers unchanged.
+- **Mirror pending:** `main` is 15 behind upstream master as of 2026-11-11
+  ~13:00 UTC (incl. #613 and the proof-observation refactors). Routine
+  fast-forward per Policy.
+
 ## History pointers
 
 - Restructure decision + 28-commit audit: coco#16, PR #15, and the 2026-11-10
